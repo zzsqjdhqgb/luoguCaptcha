@@ -84,8 +84,11 @@ def build_crnn_model():
     """Builds the CRNN model architecture for prediction and a wrapped model for training."""
     image_input = layers.Input(shape=(IMG_HEIGHT, IMG_WIDTH, 1), name="image", dtype="float32")
 
-    # 1. 卷积层 (CNN)
-    x = layers.Conv2D(32, 3, padding="same", activation="relu")(image_input)
+    # --- 优化 1: 归一化输入 ---
+    x = layers.Rescaling(1.0 / 255)(image_input)
+
+    # 1. 卷积层 (CNN) - 让卷积层接收归一化后的 x
+    x = layers.Conv2D(32, 3, padding="same", activation="relu")(x)
     x = layers.BatchNormalization()(x)
     x = layers.MaxPooling2D(2, name="pool1")(x)
     x = layers.Conv2D(64, 3, padding="same", activation="relu")(x)
@@ -99,6 +102,10 @@ def build_crnn_model():
     conv_shape = x.shape
     new_shape = (conv_shape[2], conv_shape[1] * conv_shape[3])
     x = layers.Reshape(target_shape=new_shape, name="reshape")(x)
+
+    # --- 优化 3: 在 RNN 前稳定输入 ---
+    x = layers.BatchNormalization()(x)
+
     x = layers.Dense(64, activation="relu", name="dense1")(x)
     x = layers.Dropout(0.2)(x)
 
@@ -116,16 +123,10 @@ def build_crnn_model():
     input_length_input = layers.Input(name="input_length", shape=[1], dtype="int32")
     label_length_input = layers.Input(name="label_length", shape=[1], dtype="int32")
 
-    # --- FIX START: 使用 tf.nn.ctc_loss 代替 K.ctc_batch_cost ---
     def ctc_loss_func(args):
         y_pred, y_true, input_len, label_len = args
-        
-        # tf.nn.ctc_loss 要求长度是一维的
         label_length = tf.squeeze(label_len, axis=-1)
         logit_length = tf.squeeze(input_len, axis=-1)
-        
-        # 计算 CTC loss
-        # logits_time_major=False 因为我们的 y_pred 是 (batch, time, classes)
         loss = tf.nn.ctc_loss(
             labels=y_true,
             logits=y_pred,
@@ -134,7 +135,6 @@ def build_crnn_model():
             logits_time_major=False
         )
         return tf.reduce_mean(loss)
-    # --- FIX END ---
 
     loss_output = layers.Lambda(
         ctc_loss_func, output_shape=(1,), name="ctc_loss"
