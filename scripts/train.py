@@ -55,22 +55,16 @@ def load_and_preprocess_data(dataset_path):
 
     # 准备 CTC Loss 所需的输入
     def prepare_for_ctc(image, label):
-        # image 和 label 已经由 to_tf_dataset 批处理
         batch_size = tf.shape(image)[0]
-        # input_length 是固定的，等于 CNN 输出的序列长度
-        input_length = tf.ones(shape=(batch_size, 1), dtype="int64") * SEQ_LEN
-        # label_length 是固定的，等于验证码字符数
-        label_length = tf.ones(shape=(batch_size, 1), dtype="int64") * CHARS_PER_LABEL
+        input_length = tf.ones(shape=(batch_size, 1), dtype="int32") * SEQ_LEN
+        label_length = tf.ones(shape=(batch_size, 1), dtype="int32") * CHARS_PER_LABEL
 
-        # Keras 模型 fit 方法要求输入和输出是元组 (inputs, outputs)
-        # inputs 是一个字典，因为我们的训练模型有多个具名输入
         inputs = {
             "image": image,
             "label": label,
             "input_length": input_length,
             "label_length": label_length,
         }
-        # outputs 是一个虚拟值，因为损失是在模型内部计算的
         outputs = tf.zeros(shape=(batch_size,))
         return inputs, outputs
 
@@ -88,7 +82,6 @@ train_dataset, val_dataset = load_and_preprocess_data(DATASET_PATH)
 # CRNN 模型架构
 def build_crnn_model():
     """Builds the CRNN model architecture for prediction and a wrapped model for training."""
-    # 定义模型的输入层
     image_input = layers.Input(shape=(IMG_HEIGHT, IMG_WIDTH, 1), name="image", dtype="float32")
 
     # 1. 卷积层 (CNN)
@@ -102,16 +95,8 @@ def build_crnn_model():
     x = layers.BatchNormalization()(x)
     x = layers.MaxPooling2D(2, name="pool3")(x)
 
-    # 2. Map-to-Sequence: 将 CNN 特征图转换为序列
-    # 获取特征图的形状，例如 (None, 4, 11, 128)
-    # 我们需要将其 reshape 为 (None, 11, 4 * 128) 以便输入 RNN
-    
-    # --- FIX START ---
-    # 使用 .shape 属性代替 .get_shape().as_list()
+    # 2. Map-to-Sequence
     conv_shape = x.shape
-    # --- FIX END ---
-    
-    # `conv_shape[1]` 是高度, `conv_shape[2]` 是宽度, `conv_shape[3]` 是通道数
     new_shape = (conv_shape[2], conv_shape[1] * conv_shape[3])
     x = layers.Reshape(target_shape=new_shape, name="reshape")(x)
     x = layers.Dense(64, activation="relu", name="dense1")(x)
@@ -122,32 +107,39 @@ def build_crnn_model():
     x = layers.Bidirectional(layers.LSTM(64, return_sequences=True, dropout=0.25))(x)
 
     # 4. 转录层
-    # 输出每个时间步的字符概率，包含空白符
     output = layers.Dense(NUM_CLASSES, activation="softmax", name="output")(x)
 
-    # 这是用于预测/推理的模型
     prediction_model = keras.Model(inputs=image_input, outputs=output, name="CRNN_Predictor")
 
     # ---- 为训练包装模型以使用 CTC Loss ----
-    # CTC Loss 需要额外的输入
-    label_input = layers.Input(name="label", shape=[CHARS_PER_LABEL], dtype="float32")
-    input_length_input = layers.Input(name="input_length", shape=[1], dtype="int64")
-    label_length_input = layers.Input(name="label_length", shape=[1], dtype="int64")
+    label_input = layers.Input(name="label", shape=[CHARS_PER_LABEL], dtype="int32")
+    input_length_input = layers.Input(name="input_length", shape=[1], dtype="int32")
+    label_length_input = layers.Input(name="label_length", shape=[1], dtype="int32")
 
-    # 定义 CTC Loss 函数
+    # --- FIX START: 使用 tf.nn.ctc_loss 代替 K.ctc_batch_cost ---
     def ctc_loss_func(args):
         y_pred, y_true, input_len, label_len = args
-        # ctc_batch_cost 的输入需要是 2D 的
-        label_len = tf.squeeze(label_len, axis=-1)
-        input_len = tf.squeeze(input_len, axis=-1)
-        return K.ctc_batch_cost(y_true, y_pred, input_len, label_len)
+        
+        # tf.nn.ctc_loss 要求长度是一维的
+        label_length = tf.squeeze(label_len, axis=-1)
+        logit_length = tf.squeeze(input_len, axis=-1)
+        
+        # 计算 CTC loss
+        # logits_time_major=False 因为我们的 y_pred 是 (batch, time, classes)
+        loss = tf.nn.ctc_loss(
+            labels=y_true,
+            logits=y_pred,
+            label_length=label_length,
+            logit_length=logit_length,
+            logits_time_major=False
+        )
+        return tf.reduce_mean(loss)
+    # --- FIX END ---
 
-    # 使用 Lambda 层将损失计算包含在模型中
     loss_output = layers.Lambda(
         ctc_loss_func, output_shape=(1,), name="ctc_loss"
     )([output, label_input, input_length_input, label_length_input])
 
-    # 这是用于训练的模型
     training_model = keras.Model(
         inputs=[image_input, label_input, input_length_input, label_length_input],
         outputs=loss_output,
@@ -160,10 +152,11 @@ def build_crnn_model():
 model, prediction_model = build_crnn_model()
 
 # 编译训练模型
-# 使用一个虚拟的 lambda 函数作为损失，因为实际的损失已经在模型内部计算
+# IMPORTANT: 训练成功后，可以移除 run_eagerly=True 来提速
 model.compile(
     optimizer=keras.optimizers.Adam(learning_rate=0.001),
     loss={"ctc_loss": lambda y_true, y_pred: y_pred},
+    # run_eagerly=True, # 调试时使用，确认能运行后可注释掉
 )
 
 print("--- Training Model Summary ---")
