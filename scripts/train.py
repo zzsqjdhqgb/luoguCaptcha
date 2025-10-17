@@ -105,7 +105,12 @@ def build_crnn_model():
     # 2. Map-to-Sequence: 将 CNN 特征图转换为序列
     # 获取特征图的形状，例如 (None, 4, 11, 128)
     # 我们需要将其 reshape 为 (None, 11, 4 * 128) 以便输入 RNN
-    conv_shape = x.get_shape().as_list()
+    
+    # --- FIX START ---
+    # 使用 .shape 属性代替 .get_shape().as_list()
+    conv_shape = x.shape
+    # --- FIX END ---
+    
     # `conv_shape[1]` 是高度, `conv_shape[2]` 是宽度, `conv_shape[3]` 是通道数
     new_shape = (conv_shape[2], conv_shape[1] * conv_shape[3])
     x = layers.Reshape(target_shape=new_shape, name="reshape")(x)
