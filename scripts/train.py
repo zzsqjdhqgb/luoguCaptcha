@@ -5,6 +5,7 @@ from tensorflow import keras
 from tensorflow.keras import layers, Model
 import numpy as np
 from datasets import load_dataset
+import matplotlib.pyplot as plt
 
 # GPU配置
 gpus = tf.config.list_physical_devices("GPU")
@@ -38,8 +39,8 @@ class Config:
     
     # 路径配置
     MODEL_DIR = "models"
-    CHECKPOINT_PATH = os.path.join(MODEL_DIR, "best_model.h5")
-    FINAL_MODEL_PATH = os.path.join(MODEL_DIR, "luoguCaptcha_crnn.h5")
+    CHECKPOINT_PATH = os.path.join(MODEL_DIR, "best_model.keras")
+    FINAL_MODEL_PATH = os.path.join(MODEL_DIR, "luoguCaptcha_crnn.keras")
 
 config = Config()
 
@@ -299,8 +300,77 @@ def train():
     # 保存最终模型
     model.save(config.FINAL_MODEL_PATH)
     print(f"\n模型已保存到: {config.FINAL_MODEL_PATH}")
+
+    plot_training_curves(history, config)
     
     return model, history
+
+
+def plot_training_curves(history, config):
+    """绘制训练曲线"""
+    import os
+    os.makedirs(config.MODEL_DIR, exist_ok=True)
+    
+    # 创建图表
+    fig, axes = plt.subplots(2, 2, figsize=(15, 10))
+    
+    # 1. 总Loss曲线
+    axes[0, 0].plot(history.history['loss'], label='Train Loss', linewidth=2)
+    axes[0, 0].plot(history.history['val_loss'], label='Val Loss', linewidth=2)
+    axes[0, 0].set_title('Total Loss', fontsize=14, fontweight='bold')
+    axes[0, 0].set_xlabel('Epoch')
+    axes[0, 0].set_ylabel('Loss')
+    axes[0, 0].legend()
+    axes[0, 0].grid(True, alpha=0.3)
+    
+    # 2. 各位置平均准确率
+    train_acc_avg = []
+    val_acc_avg = []
+    for epoch in range(len(history.history['loss'])):
+        train_avg = sum(history.history[f'char_{i}_accuracy'][epoch] for i in range(4)) / 4
+        val_avg = sum(history.history[f'val_char_{i}_accuracy'][epoch] for i in range(4)) / 4
+        train_acc_avg.append(train_avg)
+        val_acc_avg.append(val_avg)
+    
+    axes[0, 1].plot(train_acc_avg, label='Train Avg Acc', linewidth=2)
+    axes[0, 1].plot(val_acc_avg, label='Val Avg Acc', linewidth=2)
+    axes[0, 1].set_title('Average Accuracy', fontsize=14, fontweight='bold')
+    axes[0, 1].set_xlabel('Epoch')
+    axes[0, 1].set_ylabel('Accuracy')
+    axes[0, 1].legend()
+    axes[0, 1].grid(True, alpha=0.3)
+    axes[0, 1].set_ylim([0, 1.05])
+    
+    # 3. 各位置准确率对比
+    for i in range(4):
+        axes[1, 0].plot(history.history[f'char_{i}_accuracy'], 
+                       label=f'Char {i}', linewidth=1.5)
+    axes[1, 0].set_title('Per-Position Accuracy (Train)', fontsize=14, fontweight='bold')
+    axes[1, 0].set_xlabel('Epoch')
+    axes[1, 0].set_ylabel('Accuracy')
+    axes[1, 0].legend()
+    axes[1, 0].grid(True, alpha=0.3)
+    axes[1, 0].set_ylim([0, 1.05])
+    
+    # 4. 过拟合诊断
+    gap = [history.history['loss'][i] - history.history['val_loss'][i] 
+           for i in range(len(history.history['loss']))]
+    axes[1, 1].plot(gap, label='Train - Val Loss Gap', linewidth=2, color='red')
+    axes[1, 1].axhline(y=0, color='green', linestyle='--', label='No Gap')
+    axes[1, 1].set_title('Overfitting Diagnosis', fontsize=14, fontweight='bold')
+    axes[1, 1].set_xlabel('Epoch')
+    axes[1, 1].set_ylabel('Loss Gap')
+    axes[1, 1].legend()
+    axes[1, 1].grid(True, alpha=0.3)
+    
+    plt.tight_layout()
+    
+    # 保存
+    save_path = os.path.join(config.MODEL_DIR, 'training_curves.png')
+    plt.savefig(save_path, dpi=150, bbox_inches='tight')
+    print(f"\n✅ 训练曲线已保存: {save_path}")
+    
+    plt.close()
 
 if __name__ == "__main__":
     model, history = train()
