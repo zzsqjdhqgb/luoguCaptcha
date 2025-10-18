@@ -33,7 +33,7 @@ class Config:
     N_CLASSES = CHAR_SIZE  # 不使用CTC，直接分类
     
     # 训练配置
-    BATCH_SIZE = 128
+    BATCH_SIZE = 256
     EPOCHS = 50
     LEARNING_RATE = 0.001
     
@@ -41,6 +41,12 @@ class Config:
     MODEL_DIR = "models"
     CHECKPOINT_PATH = os.path.join(MODEL_DIR, "best_model.keras")
     FINAL_MODEL_PATH = os.path.join(MODEL_DIR, "luoguCaptcha_crnn.keras")
+
+    # >>> 新增：TFRecord 缓存路径配置
+    TFRECORD_DIR = "tfrecords"
+    TRAIN_TFRECORD_PATH = os.path.join(TFRECORD_DIR, "train.tfrecord")
+    TEST_TFRECORD_PATH = os.path.join(TFRECORD_DIR, "test.tfrecord")
+    METADATA_PATH = os.path.join(TFRECORD_DIR, "metadata.json")
 
 config = Config()
 
@@ -51,62 +57,61 @@ class CRNNModel:
         self.model = self._build_model()
     
     def _build_model(self):
-        """构建CRNN模型架构"""
-        inputs = layers.Input(
-            shape=(self.config.IMG_HEIGHT, self.config.IMG_WIDTH, self.config.IMG_CHANNELS),
-            name='input_image'
-        )
+        # 🔄 使用更好的初始化
+        from tensorflow.keras.initializers import HeNormal, GlorotUniform
         
-        # CNN特征提取
-        x = layers.Conv2D(32, (3, 3), padding='same', activation='relu', name='conv1')(inputs)
+        inputs = layers.Input(shape=(35, 90, 1))
+        
+        # CNN - 使用He初始化（适合ReLU）
+        x = layers.Conv2D(32, (3, 3), padding='same', activation='relu',
+                         kernel_initializer=HeNormal())(inputs)
         x = layers.BatchNormalization()(x)
-        x = layers.MaxPooling2D(pool_size=(2, 2), name='pool1')(x)
+        x = layers.MaxPooling2D((2, 2))(x)
         
-        x = layers.Conv2D(64, (3, 3), padding='same', activation='relu', name='conv2')(x)
+        x = layers.Conv2D(64, (3, 3), padding='same', activation='relu',
+                         kernel_initializer=HeNormal())(x)
         x = layers.BatchNormalization()(x)
-        x = layers.MaxPooling2D(pool_size=(2, 2), name='pool2')(x)
+        x = layers.MaxPooling2D((2, 2))(x)
         
-        x = layers.Conv2D(128, (3, 3), padding='same', activation='relu', name='conv3')(x)
+        x = layers.Conv2D(128, (3, 3), padding='same', activation='relu',
+                         kernel_initializer=HeNormal())(x)
         x = layers.BatchNormalization()(x)
-        x = layers.MaxPooling2D(pool_size=(2, 2), name='pool3')(x)
+        x = layers.MaxPooling2D((2, 2))(x)
         
-        x = layers.Conv2D(256, (3, 3), padding='same', activation='relu', name='conv4')(x)
-        x = layers.BatchNormalization()(x)
-        x = layers.MaxPooling2D(pool_size=(2, 2), name='pool4')(x)
-        
-        # 特征图重塑为序列
+        # RNN
         shape = x.shape
-        x = layers.Reshape(target_shape=(shape[2], shape[1] * shape[3]), name='reshape')(x)
-        x = layers.Dense(128, activation='relu', name='dense_before_rnn')(x)
+        x = layers.Reshape(target_shape=(shape[2], shape[1] * shape[3]))(x)
+        x = layers.Dense(128, activation='relu', 
+                        kernel_initializer=HeNormal())(x)
         x = layers.Dropout(0.3)(x)
         
-        # 双向LSTM层
+        # LSTM - 使用Glorot初始化
         x = layers.Bidirectional(
-            layers.LSTM(128, return_sequences=True, dropout=0.2),
-            name='bilstm1'
-        )(x)
-        x = layers.Bidirectional(
-            layers.LSTM(128, return_sequences=True, dropout=0.2),
-            name='bilstm2'
+            layers.LSTM(128, return_sequences=True, dropout=0.2,
+                       kernel_initializer=GlorotUniform(),
+                       recurrent_initializer='orthogonal')  # 🔄 重要
         )(x)
         
-        # 全局特征聚合
-        x = layers.GlobalAveragePooling1D(name='global_pool')(x)
-        x = layers.Dense(512, activation='relu', name='dense_final')(x)
+        x = layers.Bidirectional(
+            layers.LSTM(128, return_sequences=True, dropout=0.2,
+                       kernel_initializer=GlorotUniform(),
+                       recurrent_initializer='orthogonal')  # 🔄 重要
+        )(x)
+        
+        # 输出
+        x = layers.GlobalAveragePooling1D()(x)
+        x = layers.Dense(512, activation='relu',
+                        kernel_initializer=HeNormal())(x)
         x = layers.Dropout(0.4)(x)
         
-        # 多输出层 - 每个字符位置独立预测
         outputs = []
-        for i in range(self.config.CHARS_PER_LABEL):
-            out = layers.Dense(
-                self.config.N_CLASSES,
-                activation='softmax',
-                name=f'char_{i}'
-            )(x)
+        for i in range(4):
+            out = layers.Dense(256, activation='softmax',
+                             kernel_initializer=GlorotUniform(),  # 🔄 使用Glorot
+                             name=f'char_{i}')(x)
             outputs.append(out)
         
-        model = Model(inputs=inputs, outputs=outputs, name='CRNN_Captcha')
-        return model
+        return Model(inputs=inputs, outputs=outputs)
     
     def compile_model(self):
         """编译模型"""
@@ -127,64 +132,115 @@ class CRNNModel:
         
         return self.model
 
-# train.py - 修改 DataLoader 类
+import json
+from tqdm import tqdm
 
 class DataLoader:
     def __init__(self, config):
         self.config = config
         self.train_size = 0
         self.val_size = 0
-    
-    def load_data(self):
-        """从HuggingFace加载数据集"""
-        print(f"加载数据集: {self.config.DATASET_PATH}")
+
+    def _serialize_example(self, image, label):
+        """将单个样本序列化为 TFRecord Example Proto"""
+        feature = {
+            "image": tf.train.Feature(float_list=tf.train.FloatList(value=image.flatten())),
+            "label": tf.train.Feature(int64_list=tf.train.Int64List(value=label)),
+        }
+        return tf.train.Example(features=tf.train.Features(feature=feature)).SerializeToString()
+
+    def _create_tfrecords(self):
+        """从HuggingFace下载数据并创建TFRecord文件"""
+        print(f"TFRecord文件未找到。开始从 '{self.config.DATASET_PATH}' 创建缓存...")
+        os.makedirs(self.config.TFRECORD_DIR, exist_ok=True)
+        
+        # 1. 加载HF数据集
         dataset_dict = load_dataset(self.config.DATASET_PATH)
         
-        train_ds = dataset_dict["train"]
-        val_ds = dataset_dict["test"]
+        # 2. 处理并写入训练集
+        with tf.io.TFRecordWriter(self.config.TRAIN_TFRECORD_PATH) as writer:
+            train_ds = dataset_dict["train"]
+            self.train_size = len(train_ds)
+            for example in tqdm(train_ds, desc="正在处理训练集"):
+                image = np.array(example["image"], dtype=np.float32) / 255.0
+                label = example["label"]
+                writer.write(self._serialize_example(image, label))
         
-        self.train_size = len(train_ds)
-        self.val_size = len(val_ds)
+        # 3. 处理并写入验证集
+        with tf.io.TFRecordWriter(self.config.TEST_TFRECORD_PATH) as writer:
+            val_ds = dataset_dict["test"]
+            self.val_size = len(val_ds)
+            for example in tqdm(val_ds, desc="正在处理验证集"):
+                image = np.array(example["image"], dtype=np.float32) / 255.0
+                label = example["label"]
+                writer.write(self._serialize_example(image, label))
         
-        print(f"训练集大小: {self.train_size}")
-        print(f"验证集大小: {self.val_size}")
+        # 4. 保存数据集大小元数据
+        metadata = {"train_size": self.train_size, "val_size": self.val_size}
+        with open(self.config.METADATA_PATH, 'w') as f:
+            json.dump(metadata, f)
+            
+        print(f"TFRecord 缓存创建完成。训练集: {self.train_size}, 验证集: {self.val_size}")
+
+    def _parse_tfrecord_fn(self, example_proto):
+        """解析TFRecord Example Proto"""
+        feature_description = {
+            "image": tf.io.FixedLenFeature([self.config.IMG_HEIGHT * self.config.IMG_WIDTH], tf.float32),
+            "label": tf.io.FixedLenFeature([self.config.CHARS_PER_LABEL], tf.int64),
+        }
+        example = tf.io.parse_single_example(example_proto, feature_description)
+        image = tf.reshape(example["image"], (self.config.IMG_HEIGHT, self.config.IMG_WIDTH, self.config.IMG_CHANNELS))
+        label = tf.cast(example["label"], tf.int32)
         
-        return train_ds, val_ds
+        # 为主输出和辅助输出都提供标签
+        outputs = {f'char_{i}': label[i] for i in range(self.config.CHARS_PER_LABEL)}
+        outputs.update({f'aux_char_{i}': label[i] for i in range(self.config.CHARS_PER_LABEL)})
+        
+        return image, outputs
+
+    def _augment_data(self, image, labels):
+        """应用数据增强"""
+        image = tf.image.random_brightness(image, max_delta=0.1)
+        image = tf.image.random_contrast(image, lower=0.9, upper=1.1)
+        image = tf.clip_by_value(image, 0.0, 1.0)
+        return image, labels
+
+    def get_datasets(self):
+        """获取准备好的训练和验证数据集"""
+        if not os.path.exists(self.config.TRAIN_TFRECORD_PATH):
+            self._create_tfrecords()
+        else:
+            print("从现有TFRecord缓存加载数据...")
+            with open(self.config.METADATA_PATH, 'r') as f:
+                metadata = json.load(f)
+            self.train_size = metadata["train_size"]
+            self.val_size = metadata["val_size"]
+            print(f"训练集大小: {self.train_size}")
+            print(f"验证集大小: {self.val_size}")
     
-    def prepare_dataset(self, dataset, is_training=True):
-        """使用 to_tf_dataset 快速转换 - 零CPU预处理"""
+        # 创建TFRecordDataset
+        raw_train_ds = tf.data.TFRecordDataset(self.config.TRAIN_TFRECORD_PATH)
+        raw_val_ds = tf.data.TFRecordDataset(self.config.TEST_TFRECORD_PATH)
         
-        # 关键：直接转换为 TensorFlow 数据集
-        tf_dataset = dataset.to_tf_dataset(
-            columns="image",
-            label_cols="label",
-            batch_size=self.config.BATCH_SIZE,
-            shuffle=is_training,  # 内置shuffle
-            collate_fn=None,  # 不需要自定义collate
+        # 🔧 关键修改：先 map 再 batch
+        train_dataset = (
+            raw_train_ds
+            .map(self._parse_tfrecord_fn, num_parallel_calls=tf.data.AUTOTUNE)  # ✅ 移到 batch 前
+            .shuffle(self.train_size)
+            .map(self._augment_data, num_parallel_calls=tf.data.AUTOTUNE)
+            .batch(self.config.BATCH_SIZE, drop_remainder=True)  # ✅ batch 在 map 后
+            .prefetch(tf.data.AUTOTUNE)
         )
         
-        # 标签转换为多输出格式
-        def prepare_multi_output(image, label):
-            """将标签转换为多输出字典"""
-            outputs = {
-                f'char_{i}': label[:, i] 
-                for i in range(self.config.CHARS_PER_LABEL)
-            }
-            return image, outputs
-        
-        # 应用标签转换
-        tf_dataset = tf_dataset.map(
-            prepare_multi_output,
-            num_parallel_calls=tf.data.AUTOTUNE
+        val_dataset = (
+            raw_val_ds
+            .map(self._parse_tfrecord_fn, num_parallel_calls=tf.data.AUTOTUNE)  # ✅ 移到 batch 前
+            .batch(self.config.BATCH_SIZE, drop_remainder=True)  # ✅ batch 在 map 后
+            .prefetch(tf.data.AUTOTUNE)
         )
         
-        # 预取
-        tf_dataset = tf_dataset.prefetch(tf.data.AUTOTUNE)
-        
-        print(f"  ✅ 数据集准备完成!")
-        
-        return tf_dataset
-    
+        return train_dataset, val_dataset
+
     def get_steps(self, dataset_size):
         """计算每个epoch的步数"""
         return dataset_size // self.config.BATCH_SIZE
@@ -234,13 +290,9 @@ def train():
     # 创建模型目录
     os.makedirs(config.MODEL_DIR, exist_ok=True)
     
-    # 加载数据
+    # >>> 修改：加载数据的方式
     data_loader = DataLoader(config)
-    train_ds_hf, val_ds_hf = data_loader.load_data()
-    
-    # 准备TensorFlow数据集
-    train_dataset = data_loader.prepare_dataset(train_ds_hf, is_training=True)
-    val_dataset = data_loader.prepare_dataset(val_ds_hf, is_training=False)
+    train_dataset, val_dataset = data_loader.get_datasets()
     
     # 计算步数
     train_steps = data_loader.get_steps(data_loader.train_size)
