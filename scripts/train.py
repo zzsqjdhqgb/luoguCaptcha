@@ -50,68 +50,68 @@ class Config:
 
 config = Config()
 
-# 创建CRNN模型
 class CRNNModel:
     def __init__(self, config):
         self.config = config
         self.model = self._build_model()
     
     def _build_model(self):
-        # 🔄 使用更好的初始化
-        from tensorflow.keras.initializers import HeNormal, GlorotUniform
+        """构建CRNN模型架构"""
+        inputs = layers.Input(
+            shape=(self.config.IMG_HEIGHT, self.config.IMG_WIDTH, self.config.IMG_CHANNELS),
+            name='input_image'
+        )
         
-        inputs = layers.Input(shape=(35, 90, 1))
-        
-        # CNN - 使用He初始化（适合ReLU）
-        x = layers.Conv2D(32, (3, 3), padding='same', activation='relu',
-                         kernel_initializer=HeNormal())(inputs)
+        # CNN特征提取
+        x = layers.Conv2D(32, (3, 3), padding='same', activation='relu', name='conv1')(inputs)
         x = layers.BatchNormalization()(x)
-        x = layers.MaxPooling2D((2, 2))(x)
+        x = layers.MaxPooling2D(pool_size=(2, 2), name='pool1')(x)
         
-        x = layers.Conv2D(64, (3, 3), padding='same', activation='relu',
-                         kernel_initializer=HeNormal())(x)
+        x = layers.Conv2D(64, (3, 3), padding='same', activation='relu', name='conv2')(x)
         x = layers.BatchNormalization()(x)
-        x = layers.MaxPooling2D((2, 2))(x)
+        x = layers.MaxPooling2D(pool_size=(2, 2), name='pool2')(x)
         
-        x = layers.Conv2D(128, (3, 3), padding='same', activation='relu',
-                         kernel_initializer=HeNormal())(x)
+        x = layers.Conv2D(128, (3, 3), padding='same', activation='relu', name='conv3')(x)
         x = layers.BatchNormalization()(x)
-        x = layers.MaxPooling2D((2, 2))(x)
+        x = layers.MaxPooling2D(pool_size=(2, 2), name='pool3')(x)
         
-        # RNN
+        x = layers.Conv2D(256, (3, 3), padding='same', activation='relu', name='conv4')(x)
+        x = layers.BatchNormalization()(x)
+        x = layers.MaxPooling2D(pool_size=(2, 2), name='pool4')(x)
+        
+        # 特征图重塑为序列
         shape = x.shape
-        x = layers.Reshape(target_shape=(shape[2], shape[1] * shape[3]))(x)
-        x = layers.Dense(128, activation='relu', 
-                        kernel_initializer=HeNormal())(x)
+        x = layers.Reshape(target_shape=(shape[2], shape[1] * shape[3]), name='reshape')(x)
+        x = layers.Dense(128, activation='relu', name='dense_before_rnn')(x)
         x = layers.Dropout(0.3)(x)
         
-        # LSTM - 使用Glorot初始化
+        # 双向LSTM层
         x = layers.Bidirectional(
-            layers.LSTM(128, return_sequences=True, dropout=0.2,
-                       kernel_initializer=GlorotUniform(),
-                       recurrent_initializer='orthogonal')  # 🔄 重要
+            layers.LSTM(128, return_sequences=True, dropout=0.2),
+            name='bilstm1'
+        )(x)
+        x = layers.Bidirectional(
+            layers.LSTM(128, return_sequences=True, dropout=0.2),
+            name='bilstm2'
         )(x)
         
-        x = layers.Bidirectional(
-            layers.LSTM(128, return_sequences=True, dropout=0.2,
-                       kernel_initializer=GlorotUniform(),
-                       recurrent_initializer='orthogonal')  # 🔄 重要
-        )(x)
-        
-        # 输出
-        x = layers.GlobalAveragePooling1D()(x)
-        x = layers.Dense(512, activation='relu',
-                        kernel_initializer=HeNormal())(x)
+        # 全局特征聚合
+        x = layers.GlobalAveragePooling1D(name='global_pool')(x)
+        x = layers.Dense(512, activation='relu', name='dense_final')(x)
         x = layers.Dropout(0.4)(x)
         
+        # 多输出层 - 每个字符位置独立预测
         outputs = []
-        for i in range(4):
-            out = layers.Dense(256, activation='softmax',
-                             kernel_initializer=GlorotUniform(),  # 🔄 使用Glorot
-                             name=f'char_{i}')(x)
+        for i in range(self.config.CHARS_PER_LABEL):
+            out = layers.Dense(
+                self.config.N_CLASSES,
+                activation='softmax',
+                name=f'char_{i}'
+            )(x)
             outputs.append(out)
         
-        return Model(inputs=inputs, outputs=outputs)
+        model = Model(inputs=inputs, outputs=outputs, name='CRNN_Captcha')
+        return model
     
     def compile_model(self):
         """编译模型"""
@@ -131,7 +131,6 @@ class CRNNModel:
         )
         
         return self.model
-
 import json
 from tqdm import tqdm
 
