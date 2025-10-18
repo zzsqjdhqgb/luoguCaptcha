@@ -41,7 +41,7 @@ class Config:
     MODEL_DIR = "models"
     CHECKPOINT_PATH = os.path.join(MODEL_DIR, "best_model.keras")
     FINAL_MODEL_PATH = os.path.join(MODEL_DIR, "luoguCaptcha_crnn.keras")
-
+    
     # >>> 新增：TFRecord 缓存路径配置
     TFRECORD_DIR = "tfrecords"
     TRAIN_TFRECORD_PATH = os.path.join(TFRECORD_DIR, "train.tfrecord")
@@ -57,81 +57,65 @@ class CRNNModel:
         self.model = self._build_model()
     
     def _build_model(self):
-        # 🔄 使用更好的初始化
-        from tensorflow.keras.initializers import HeNormal, GlorotUniform
-        
         inputs = layers.Input(shape=(35, 90, 1))
         
-        # CNN - 使用He初始化（适合ReLU）
-        x = layers.Conv2D(32, (3, 3), padding='same', activation='relu',
-                         kernel_initializer=HeNormal())(inputs)
-        x = layers.BatchNormalization()(x)
+        # CNN
+        x = layers.Conv2D(32, (3, 3), padding='same', activation='relu')(inputs)
         x = layers.MaxPooling2D((2, 2))(x)
         
-        x = layers.Conv2D(64, (3, 3), padding='same', activation='relu',
-                         kernel_initializer=HeNormal())(x)
-        x = layers.BatchNormalization()(x)
+        x = layers.Conv2D(64, (3, 3), padding='same', activation='relu')(x)
         x = layers.MaxPooling2D((2, 2))(x)
         
-        x = layers.Conv2D(128, (3, 3), padding='same', activation='relu',
-                         kernel_initializer=HeNormal())(x)
-        x = layers.BatchNormalization()(x)
-        x = layers.MaxPooling2D((2, 2))(x)
+        x = layers.Conv2D(128, (3, 3), padding='same', activation='relu')(x)
+        cnn_features = layers.GlobalAveragePooling2D()(x)  # 🔄 CNN辅助输出
         
-        # RNN
+        # 辅助输出1：仅用CNN特征预测
+        aux_outputs = []
+        for i in range(4):
+            aux = layers.Dense(256, activation='softmax', name=f'aux_char_{i}')(cnn_features)
+            aux_outputs.append(aux)
+        
+        # 继续RNN
+        x = layers.MaxPooling2D((2, 2))(x)
         shape = x.shape
         x = layers.Reshape(target_shape=(shape[2], shape[1] * shape[3]))(x)
-        x = layers.Dense(128, activation='relu', 
-                        kernel_initializer=HeNormal())(x)
-        x = layers.Dropout(0.3)(x)
         
-        # LSTM - 使用Glorot初始化
-        x = layers.Bidirectional(
-            layers.LSTM(128, return_sequences=True, dropout=0.2,
-                       kernel_initializer=GlorotUniform(),
-                       recurrent_initializer='orthogonal')  # 🔄 重要
-        )(x)
-        
-        x = layers.Bidirectional(
-            layers.LSTM(128, return_sequences=True, dropout=0.2,
-                       kernel_initializer=GlorotUniform(),
-                       recurrent_initializer='orthogonal')  # 🔄 重要
-        )(x)
-        
-        # 输出
+        x = layers.Bidirectional(layers.LSTM(128, return_sequences=True))(x)
         x = layers.GlobalAveragePooling1D()(x)
-        x = layers.Dense(512, activation='relu',
-                        kernel_initializer=HeNormal())(x)
-        x = layers.Dropout(0.4)(x)
+        x = layers.Dense(512, activation='relu')(x)
         
-        outputs = []
+        # 主输出
+        main_outputs = []
         for i in range(4):
-            out = layers.Dense(256, activation='softmax',
-                             kernel_initializer=GlorotUniform(),  # 🔄 使用Glorot
-                             name=f'char_{i}')(x)
-            outputs.append(out)
+            out = layers.Dense(256, activation='softmax', name=f'char_{i}')(x)
+            main_outputs.append(out)
         
-        return Model(inputs=inputs, outputs=outputs)
+        # 返回主输出+辅助输出
+        return Model(inputs=inputs, outputs=main_outputs + aux_outputs)
     
     def compile_model(self):
-        """编译模型"""
-        optimizer = keras.optimizers.Adam(learning_rate=self.config.LEARNING_RATE)
+        optimizer = keras.optimizers.Adam(learning_rate=0.001)
         
-        # 每个输出使用稀疏分类交叉熵
-        losses = {f'char_{i}': 'sparse_categorical_crossentropy' 
-                  for i in range(self.config.CHARS_PER_LABEL)}
+        # 主loss权重1.0，辅助loss权重0.3
+        losses = {}
+        loss_weights = {}
         
-        metrics = {f'char_{i}': ['accuracy'] 
-                   for i in range(self.config.CHARS_PER_LABEL)}
+        for i in range(4):
+            losses[f'char_{i}'] = 'sparse_categorical_crossentropy'
+            loss_weights[f'char_{i}'] = 1.0
+            
+            losses[f'aux_char_{i}'] = 'sparse_categorical_crossentropy'
+            loss_weights[f'aux_char_{i}'] = 0.3  # 🔄 辅助loss权重小
         
         self.model.compile(
             optimizer=optimizer,
             loss=losses,
-            metrics=metrics
+            loss_weights=loss_weights
         )
         
         return self.model
 
+# train.py - 修改 DataLoader 类
 import json
 from tqdm import tqdm
 
@@ -332,7 +316,7 @@ def train():
         ),
         CaptchaAccuracyCallback(val_dataset, config),
         keras.callbacks.TensorBoard(
-            log_dir='logs',
+            log_dir='log_temp1_secondloss',
             histogram_freq=1
         )
     ]
@@ -356,7 +340,6 @@ def train():
     plot_training_curves(history, config)
     
     return model, history
-
 
 def plot_training_curves(history, config):
     """绘制训练曲线"""
