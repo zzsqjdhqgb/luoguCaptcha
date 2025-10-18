@@ -192,9 +192,8 @@ class DataLoader:
         image = tf.reshape(example["image"], (self.config.IMG_HEIGHT, self.config.IMG_WIDTH, self.config.IMG_CHANNELS))
         label = tf.cast(example["label"], tf.int32)
         
-        # 为主输出和辅助输出都提供标签
+        # 🔧 修改：只为主输出提供标签（移除辅助输出）
         outputs = {f'char_{i}': label[i] for i in range(self.config.CHARS_PER_LABEL)}
-        outputs.update({f'aux_char_{i}': label[i] for i in range(self.config.CHARS_PER_LABEL)})
         
         return image, outputs
 
@@ -217,25 +216,25 @@ class DataLoader:
             self.val_size = metadata["val_size"]
             print(f"训练集大小: {self.train_size}")
             print(f"验证集大小: {self.val_size}")
-    
+
         # 创建TFRecordDataset
         raw_train_ds = tf.data.TFRecordDataset(self.config.TRAIN_TFRECORD_PATH)
         raw_val_ds = tf.data.TFRecordDataset(self.config.TEST_TFRECORD_PATH)
         
-        # 🔧 关键修改：先 map 再 batch
+        # ✅ 修复：先 map 后 batch
         train_dataset = (
             raw_train_ds
-            .map(self._parse_tfrecord_fn, num_parallel_calls=tf.data.AUTOTUNE)  # ✅ 移到 batch 前
+            .map(self._parse_tfrecord_fn, num_parallel_calls=tf.data.AUTOTUNE)
             .shuffle(self.train_size)
             .map(self._augment_data, num_parallel_calls=tf.data.AUTOTUNE)
-            .batch(self.config.BATCH_SIZE, drop_remainder=True)  # ✅ batch 在 map 后
+            .batch(self.config.BATCH_SIZE, drop_remainder=True)
             .prefetch(tf.data.AUTOTUNE)
         )
         
         val_dataset = (
             raw_val_ds
-            .map(self._parse_tfrecord_fn, num_parallel_calls=tf.data.AUTOTUNE)  # ✅ 移到 batch 前
-            .batch(self.config.BATCH_SIZE, drop_remainder=True)  # ✅ batch 在 map 后
+            .map(self._parse_tfrecord_fn, num_parallel_calls=tf.data.AUTOTUNE)
+            .batch(self.config.BATCH_SIZE, drop_remainder=True)
             .prefetch(tf.data.AUTOTUNE)
         )
         
@@ -244,6 +243,7 @@ class DataLoader:
     def get_steps(self, dataset_size):
         """计算每个epoch的步数"""
         return dataset_size // self.config.BATCH_SIZE
+    
 
 # 自定义回调 - 计算整体准确率
 class CaptchaAccuracyCallback(keras.callbacks.Callback):
