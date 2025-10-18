@@ -66,19 +66,18 @@ class DataLoader:
         return tf.train.Example(features=tf.train.Features(feature=feature)).SerializeToString()
 
     def _create_tfrecords(self):
-        """从HuggingFace下载数据并创建TFRecord文件"""
         print(f"TFRecord文件未找到。开始从 '{self.config.DATASET_PATH}' 创建缓存...")
         os.makedirs(self.config.TFRECORD_DIR, exist_ok=True)
-        
+
         dataset_dict = load_dataset(self.config.DATASET_PATH)
-        
+
         # 处理训练集
         with tf.io.TFRecordWriter(self.config.TRAIN_TFRECORD_PATH) as writer:
             train_ds = dataset_dict["train"]
             self.train_size = len(train_ds)
             for example in tqdm(train_ds, desc="正在处理训练集"):
                 image = np.array(example["image"], dtype=np.float32)
-                # 判断是否需要归一化
+                # 修改：只在需要时归一化
                 if image.max() > 1.0:
                     image = image / 255.0
                 label = example["label"]
@@ -149,7 +148,7 @@ class DataLoader:
 
 
 def build_model(config):
-    """构建原版模型 - 完全按照你的架构"""
+    """构建原版模型 - 修正版"""
     inputs = keras.Input(
         shape=(config.IMG_HEIGHT, config.IMG_WIDTH, config.IMG_CHANNELS), 
         name="input"
@@ -170,14 +169,17 @@ def build_model(config):
     x = layers.Flatten()(x)
     x = layers.Dropout(0.5)(x)
     x = layers.Dense(512, activation="relu")(x)
-    x = layers.Dense(config.CHARS_PER_LABEL * config.CHAR_SIZE, activation="softmax")(x)
+    
+    # 关键修改：先不用 softmax，改用 linear，然后用 from_logits=True
+    x = layers.Dense(config.CHARS_PER_LABEL * config.CHAR_SIZE)(x)  # 去掉 activation
     outputs = layers.Reshape((config.CHARS_PER_LABEL, config.CHAR_SIZE))(x)
     
     model = keras.Model(inputs=inputs, outputs=outputs, name="LuoguCaptcha")
     
+    # 使用 from_logits=True
     model.compile(
         optimizer=keras.optimizers.Adam(learning_rate=config.LEARNING_RATE),
-        loss="sparse_categorical_crossentropy",
+        loss=keras.losses.SparseCategoricalCrossentropy(from_logits=True),
         metrics=["accuracy"],
     )
     
