@@ -26,7 +26,7 @@ def preview_dataset(source_path, from_hub=True, num_samples=5):
             # 加载数据集（假设为 DatasetDict）
             dataset_dict = load_dataset(source_path)
             # 默认预览 'train' 分割
-            dataset = dataset_dict["train"]
+            dataset = dataset_dict["test"]
         else:
             print(f"Loading dataset from local disk: {source_path}")
             # 加载本地数据集（假设为 DatasetDict）

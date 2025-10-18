@@ -1,0 +1,12 @@
+{
+  "overall_accuracy": 100.0,
+  "position_accuracies": [
+    100.0,
+    100.0,
+    100.0,
+    100.0
+  ],
+  "total_samples": 10000,
+  "correct_samples": 10000,
+  "error_samples": 0
+}
