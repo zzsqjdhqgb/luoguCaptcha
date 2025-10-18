@@ -1,189 +1,319 @@
-# scripts/train.py
-# Copyright (C) 2025 Langning Chen
-# CRNN-CTC based captcha training script
-
+# train.py
 import os
-import numpy as np
 import tensorflow as tf
 from tensorflow import keras
-from tensorflow.keras import layers
-from tensorflow.keras import backend as K
+from tensorflow.keras import layers, Model
+import numpy as np
 from datasets import load_dataset
 
-# 自动选择设备
+# GPU配置
 gpus = tf.config.list_physical_devices("GPU")
 if gpus:
     try:
         for gpu in gpus:
             tf.config.experimental.set_memory_growth(gpu, True)
-        print(f"Using GPU: {gpus}")
+        print(f"使用GPU: {gpus}")
     except Exception as e:
-        print(f"GPU setup error: {e}")
+        print(f"GPU设置错误: {e}")
 else:
-    print("Using CPU")
+    print("使用CPU")
 
-# 参数
-CHAR_SIZE = 256
-NUM_CLASSES = CHAR_SIZE + 1  # 增加一个空白符给 CTC Loss
-CHARS_PER_LABEL = 4
-IMG_HEIGHT, IMG_WIDTH = 35, 90
-EPOCHS = 15
-BATCH_SIZE = 256
-DATASET_PATH = "langningchen/luogu-captcha-dataset"
+# 超参数配置
+class Config:
+    # 数据集配置
+    DATASET_PATH = "langningchen/luogu-captcha-dataset"
+    IMG_HEIGHT = 35
+    IMG_WIDTH = 90
+    IMG_CHANNELS = 1
+    
+    # 验证码配置
+    CHARS_PER_LABEL = 4
+    CHAR_SIZE = 256
+    N_CLASSES = CHAR_SIZE  # 不使用CTC，直接分类
+    
+    # 训练配置
+    BATCH_SIZE = 128
+    EPOCHS = 50
+    LEARNING_RATE = 0.001
+    
+    # 路径配置
+    MODEL_DIR = "models"
+    CHECKPOINT_PATH = os.path.join(MODEL_DIR, "best_model.h5")
+    FINAL_MODEL_PATH = os.path.join(MODEL_DIR, "luoguCaptcha_crnn.h5")
 
-# 根据模型架构计算CNN输出的序列长度
-# Input (90) -> Pool1(2) -> 45 -> Pool2(2) -> 22 -> Pool3(2) -> 11
-SEQ_LEN = 11
+config = Config()
 
-
-# 数据加载与预处理 (适配 CTC)
-def load_and_preprocess_data(dataset_path):
-    """Loads pre-processed dataset from Hugging Face Hub and prepares it for CTC loss."""
-    dataset_dict = load_dataset(dataset_path)
-    train_ds_hf = dataset_dict["train"]
-    val_ds_hf = dataset_dict["test"]
-
-    train_ds = train_ds_hf.to_tf_dataset(
-        columns="image",
-        label_cols="label",
-        batch_size=BATCH_SIZE,
-        shuffle=True,
-    )
-    val_ds = val_ds_hf.to_tf_dataset(
-        columns="image", label_cols="label", batch_size=BATCH_SIZE
-    )
-
-    # 准备 CTC Loss 所需的输入
-    def prepare_for_ctc(image, label):
-        batch_size = tf.shape(image)[0]
-        input_length = tf.ones(shape=(batch_size, 1), dtype="int32") * SEQ_LEN
-        label_length = tf.ones(shape=(batch_size, 1), dtype="int32") * CHARS_PER_LABEL
-
-        inputs = {
-            "image": image,
-            "label": label,
-            "input_length": input_length,
-            "label_length": label_length,
-        }
-        outputs = tf.zeros(shape=(batch_size,))
-        return inputs, outputs
-
-    train_dataset = train_ds.map(prepare_for_ctc, num_parallel_calls=tf.data.AUTOTUNE)
-    val_dataset = val_ds.map(prepare_for_ctc, num_parallel_calls=tf.data.AUTOTUNE)
-
-    return train_dataset.prefetch(tf.data.AUTOTUNE), val_dataset.prefetch(
-        tf.data.AUTOTUNE
-    )
-
-
-train_dataset, val_dataset = load_and_preprocess_data(DATASET_PATH)
-
-
-# CRNN 模型架构
-def build_crnn_model():
-    """Builds the CRNN model architecture for prediction and a wrapped model for training."""
-    image_input = layers.Input(shape=(IMG_HEIGHT, IMG_WIDTH, 1), name="image", dtype="float32")
-
-    # --- 优化 1: 归一化输入 ---
-    x = layers.Rescaling(1.0 / 255)(image_input)
-
-    # 1. 卷积层 (CNN) - 让卷积层接收归一化后的 x
-    x = layers.Conv2D(32, 3, padding="same", activation="relu")(x)
-    x = layers.BatchNormalization()(x)
-    x = layers.MaxPooling2D(2, name="pool1")(x)
-    x = layers.Conv2D(64, 3, padding="same", activation="relu")(x)
-    x = layers.BatchNormalization()(x)
-    x = layers.MaxPooling2D(2, name="pool2")(x)
-    x = layers.Conv2D(128, 3, padding="same", activation="relu")(x)
-    x = layers.BatchNormalization()(x)
-    x = layers.MaxPooling2D(2, name="pool3")(x)
-
-    # 2. Map-to-Sequence
-    conv_shape = x.shape
-    new_shape = (conv_shape[2], conv_shape[1] * conv_shape[3])
-    x = layers.Reshape(target_shape=new_shape, name="reshape")(x)
-
-    # --- 优化 3: 在 RNN 前稳定输入 ---
-    x = layers.BatchNormalization()(x)
-
-    x = layers.Dense(64, activation="relu", name="dense1")(x)
-    x = layers.Dropout(0.2)(x)
-
-    # 3. 循环层 (RNN)
-    x = layers.Bidirectional(layers.LSTM(128, return_sequences=True, dropout=0.25))(x)
-    x = layers.Bidirectional(layers.LSTM(64, return_sequences=True, dropout=0.25))(x)
-
-    # 4. 转录层
-    output = layers.Dense(NUM_CLASSES, activation="softmax", name="output")(x)
-
-    prediction_model = keras.Model(inputs=image_input, outputs=output, name="CRNN_Predictor")
-
-    # ---- 为训练包装模型以使用 CTC Loss ----
-    label_input = layers.Input(name="label", shape=[CHARS_PER_LABEL], dtype="int32")
-    input_length_input = layers.Input(name="input_length", shape=[1], dtype="int32")
-    label_length_input = layers.Input(name="label_length", shape=[1], dtype="int32")
-
-    def ctc_loss_func(args):
-        y_pred, y_true, input_len, label_len = args
-        label_length = tf.squeeze(label_len, axis=-1)
-        logit_length = tf.squeeze(input_len, axis=-1)
-        loss = tf.nn.ctc_loss(
-            labels=y_true,
-            logits=y_pred,
-            label_length=label_length,
-            logit_length=logit_length,
-            logits_time_major=False
+# 创建CRNN模型
+class CRNNModel:
+    def __init__(self, config):
+        self.config = config
+        self.model = self._build_model()
+    
+    def _build_model(self):
+        """构建CRNN模型架构"""
+        inputs = layers.Input(
+            shape=(self.config.IMG_HEIGHT, self.config.IMG_WIDTH, self.config.IMG_CHANNELS),
+            name='input_image'
         )
-        return tf.reduce_mean(loss)
+        
+        # CNN特征提取
+        x = layers.Conv2D(32, (3, 3), padding='same', activation='relu', name='conv1')(inputs)
+        x = layers.BatchNormalization()(x)
+        x = layers.MaxPooling2D(pool_size=(2, 2), name='pool1')(x)
+        
+        x = layers.Conv2D(64, (3, 3), padding='same', activation='relu', name='conv2')(x)
+        x = layers.BatchNormalization()(x)
+        x = layers.MaxPooling2D(pool_size=(2, 2), name='pool2')(x)
+        
+        x = layers.Conv2D(128, (3, 3), padding='same', activation='relu', name='conv3')(x)
+        x = layers.BatchNormalization()(x)
+        x = layers.MaxPooling2D(pool_size=(2, 2), name='pool3')(x)
+        
+        x = layers.Conv2D(256, (3, 3), padding='same', activation='relu', name='conv4')(x)
+        x = layers.BatchNormalization()(x)
+        x = layers.MaxPooling2D(pool_size=(2, 2), name='pool4')(x)
+        
+        # 特征图重塑为序列
+        shape = x.shape
+        x = layers.Reshape(target_shape=(shape[2], shape[1] * shape[3]), name='reshape')(x)
+        x = layers.Dense(128, activation='relu', name='dense_before_rnn')(x)
+        x = layers.Dropout(0.3)(x)
+        
+        # 双向LSTM层
+        x = layers.Bidirectional(
+            layers.LSTM(128, return_sequences=True, dropout=0.2),
+            name='bilstm1'
+        )(x)
+        x = layers.Bidirectional(
+            layers.LSTM(128, return_sequences=True, dropout=0.2),
+            name='bilstm2'
+        )(x)
+        
+        # 全局特征聚合
+        x = layers.GlobalAveragePooling1D(name='global_pool')(x)
+        x = layers.Dense(512, activation='relu', name='dense_final')(x)
+        x = layers.Dropout(0.4)(x)
+        
+        # 多输出层 - 每个字符位置独立预测
+        outputs = []
+        for i in range(self.config.CHARS_PER_LABEL):
+            out = layers.Dense(
+                self.config.N_CLASSES,
+                activation='softmax',
+                name=f'char_{i}'
+            )(x)
+            outputs.append(out)
+        
+        model = Model(inputs=inputs, outputs=outputs, name='CRNN_Captcha')
+        return model
+    
+    def compile_model(self):
+        """编译模型"""
+        optimizer = keras.optimizers.Adam(learning_rate=self.config.LEARNING_RATE)
+        
+        # 每个输出使用稀疏分类交叉熵
+        losses = {f'char_{i}': 'sparse_categorical_crossentropy' 
+                  for i in range(self.config.CHARS_PER_LABEL)}
+        
+        metrics = {f'char_{i}': ['accuracy'] 
+                   for i in range(self.config.CHARS_PER_LABEL)}
+        
+        self.model.compile(
+            optimizer=optimizer,
+            loss=losses,
+            metrics=metrics
+        )
+        
+        return self.model
 
-    loss_output = layers.Lambda(
-        ctc_loss_func, output_shape=(1,), name="ctc_loss"
-    )([output, label_input, input_length_input, label_length_input])
+# train.py - 修改 DataLoader 类
 
-    training_model = keras.Model(
-        inputs=[image_input, label_input, input_length_input, label_length_input],
-        outputs=loss_output,
-        name="CRNN_Trainer"
-    )
+class DataLoader:
+    def __init__(self, config):
+        self.config = config
+        self.train_size = 0
+        self.val_size = 0
+    
+    def load_data(self):
+        """从HuggingFace加载数据集"""
+        print(f"加载数据集: {self.config.DATASET_PATH}")
+        dataset_dict = load_dataset(self.config.DATASET_PATH)
+        
+        train_ds = dataset_dict["train"]
+        val_ds = dataset_dict["test"]
+        
+        self.train_size = len(train_ds)
+        self.val_size = len(val_ds)
+        
+        print(f"训练集大小: {self.train_size}")
+        print(f"验证集大小: {self.val_size}")
+        
+        return train_ds, val_ds
+    
+    def prepare_dataset(self, dataset, is_training=True):
+        """准备TensorFlow数据集 - 优化版本"""
+        # 方法1：转换为NumPy数组（推荐，速度最快）
+        print("正在转换数据集为NumPy数组...")
+        images_list = []
+        labels_list = []
+        
+        for sample in dataset:
+            image = np.array(sample["image"], dtype=np.float32) / 255.0
+            label = np.array(sample["label"], dtype=np.int32)
+            
+            # 确保图像维度正确
+            if len(image.shape) == 2:
+                image = np.expand_dims(image, axis=-1)
+            
+            images_list.append(image)
+            labels_list.append(label)
+        
+        images = np.array(images_list)
+        labels = np.array(labels_list)
+        
+        print(f"数据形状 - 图像: {images.shape}, 标签: {labels.shape}")
+        
+        # 创建tf.data.Dataset
+        tf_dataset = tf.data.Dataset.from_tensor_slices((images, labels))
+        
+        if is_training:
+            tf_dataset = tf_dataset.shuffle(10000, reshuffle_each_iteration=True)
+        
+        tf_dataset = tf_dataset.batch(self.config.BATCH_SIZE)
+        tf_dataset = tf_dataset.map(
+            self._prepare_labels, 
+            num_parallel_calls=tf.data.AUTOTUNE
+        )
+        tf_dataset = tf_dataset.prefetch(tf.data.AUTOTUNE)
+        
+        return tf_dataset
+    
+    def _prepare_labels(self, images, labels):
+        """将标签转换为多输出格式"""
+        outputs = {}
+        for i in range(self.config.CHARS_PER_LABEL):
+            outputs[f'char_{i}'] = labels[:, i]
+        
+        return images, outputs
+    
+    def get_steps(self, dataset_size):
+        """计算每个epoch的步数"""
+        return dataset_size // self.config.BATCH_SIZE
 
-    return training_model, prediction_model
+# 自定义回调 - 计算整体准确率
+class CaptchaAccuracyCallback(keras.callbacks.Callback):
+    def __init__(self, validation_data, config):
+        super().__init__()
+        self.validation_data = validation_data
+        self.config = config
+        self.best_accuracy = 0.0
+    
+    def on_epoch_end(self, epoch, logs=None):
+        """在每个epoch结束时计算完整验证码准确率"""
+        correct = 0
+        total = 0
+        
+        for images, labels_dict in self.validation_data:
+            predictions = self.model.predict(images, verbose=0)
+            
+            batch_size = images.shape[0]
+            for i in range(batch_size):
+                # 获取真实标签
+                true_label = [labels_dict[f'char_{j}'].numpy()[i] 
+                             for j in range(self.config.CHARS_PER_LABEL)]
+                
+                # 获取预测标签
+                pred_label = [np.argmax(predictions[j][i]) 
+                             for j in range(self.config.CHARS_PER_LABEL)]
+                
+                if true_label == pred_label:
+                    correct += 1
+                total += 1
+        
+        accuracy = correct / total if total > 0 else 0
+        print(f"\n完整验证码准确率: {accuracy:.4f} ({correct}/{total})")
+        
+        if accuracy > self.best_accuracy:
+            self.best_accuracy = accuracy
+            print(f"最佳准确率更新: {self.best_accuracy:.4f}")
+        
+        logs['val_captcha_accuracy'] = accuracy
 
-# 构建模型
-model, prediction_model = build_crnn_model()
-
-# 编译训练模型
-# IMPORTANT: 训练成功后，可以移除 run_eagerly=True 来提速
-model.compile(
-    optimizer=keras.optimizers.Adam(learning_rate=0.001),
-    loss={"ctc_loss": lambda y_true, y_pred: y_pred},
-    # run_eagerly=True, # 调试时使用，确认能运行后可注释掉
-)
-
-print("--- Training Model Summary ---")
-model.summary()
-print("\n--- Prediction Model Summary ---")
-prediction_model.summary()
-
-# 训练
-history = model.fit(
-    train_dataset,
-    validation_data=val_dataset,
-    epochs=EPOCHS,
-    callbacks=[
-        keras.callbacks.EarlyStopping(
-            monitor="val_loss", patience=5, restore_best_weights=True
+# 主训练函数
+def train():
+    """主训练流程"""
+    # 创建模型目录
+    os.makedirs(config.MODEL_DIR, exist_ok=True)
+    
+    # 加载数据
+    data_loader = DataLoader(config)
+    train_ds_hf, val_ds_hf = data_loader.load_data()
+    
+    # 准备TensorFlow数据集
+    train_dataset = data_loader.prepare_dataset(train_ds_hf, is_training=True)
+    val_dataset = data_loader.prepare_dataset(val_ds_hf, is_training=False)
+    
+    # 计算步数
+    train_steps = data_loader.get_steps(data_loader.train_size)
+    val_steps = data_loader.get_steps(data_loader.val_size)
+    
+    print(f"\n每epoch训练步数: {train_steps}")
+    print(f"每epoch验证步数: {val_steps}")
+    
+    # 构建和编译模型
+    crnn = CRNNModel(config)
+    model = crnn.compile_model()
+    
+    print("\n模型架构:")
+    model.summary()
+    
+    # 回调函数
+    callbacks = [
+        keras.callbacks.ModelCheckpoint(
+            config.CHECKPOINT_PATH,
+            save_best_only=True,
+            monitor='val_loss',
+            mode='min',
+            verbose=1
         ),
         keras.callbacks.ReduceLROnPlateau(
-            monitor="val_loss", factor=0.2, patience=3, min_lr=1e-5
+            monitor='val_loss',
+            factor=0.5,
+            patience=3,
+            min_lr=1e-6,
+            verbose=1
         ),
-    ],
-)
+        keras.callbacks.EarlyStopping(
+            monitor='val_loss',
+            patience=8,
+            restore_best_weights=True,
+            verbose=1
+        ),
+        CaptchaAccuracyCallback(val_dataset, config),
+        keras.callbacks.TensorBoard(
+            log_dir='logs',
+            histogram_freq=1
+        )
+    ]
+    
+    # 训练模型 - 明确指定步数
+    print("\n开始训练...")
+    history = model.fit(
+        train_dataset,
+        validation_data=val_dataset,
+        epochs=config.EPOCHS,
+        steps_per_epoch=train_steps,  # 明确指定
+        validation_steps=val_steps,    # 明确指定
+        callbacks=callbacks,
+        verbose=1
+    )
+    
+    # 保存最终模型
+    model.save(config.FINAL_MODEL_PATH)
+    print(f"\n模型已保存到: {config.FINAL_MODEL_PATH}")
+    
+    return model, history
 
-# 保存用于推理的模型 (本地)
-os.makedirs("models", exist_ok=True)
-final_model_path = "models/luoguCaptcha_crnn.keras"
-prediction_model.save(final_model_path)
-print(f"Prediction model saved to {final_model_path}")
-
-# 提示上传
-print(f"Run `python scripts/huggingface.py upload_model {final_model_path}` to upload.")
+if __name__ == "__main__":
+    model, history = train()
+    print("\n训练完成！")
