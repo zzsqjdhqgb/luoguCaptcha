@@ -151,50 +151,38 @@ class DataLoader:
         return train_ds, val_ds
     
     def prepare_dataset(self, dataset, is_training=True):
-        """准备TensorFlow数据集 - 优化版本"""
-        # 方法1：转换为NumPy数组（推荐，速度最快）
-        print("正在转换数据集为NumPy数组...")
-        images_list = []
-        labels_list = []
+        """使用 to_tf_dataset 快速转换 - 零CPU预处理"""
         
-        for sample in dataset:
-            image = np.array(sample["image"], dtype=np.float32) / 255.0
-            label = np.array(sample["label"], dtype=np.int32)
-            
-            # 确保图像维度正确
-            if len(image.shape) == 2:
-                image = np.expand_dims(image, axis=-1)
-            
-            images_list.append(image)
-            labels_list.append(label)
+        # 关键：直接转换为 TensorFlow 数据集
+        tf_dataset = dataset.to_tf_dataset(
+            columns="image",
+            label_cols="label",
+            batch_size=self.config.BATCH_SIZE,
+            shuffle=is_training,  # 内置shuffle
+            collate_fn=None,  # 不需要自定义collate
+        )
         
-        images = np.array(images_list)
-        labels = np.array(labels_list)
+        # 标签转换为多输出格式
+        def prepare_multi_output(image, label):
+            """将标签转换为多输出字典"""
+            outputs = {
+                f'char_{i}': label[:, i] 
+                for i in range(self.config.CHARS_PER_LABEL)
+            }
+            return image, outputs
         
-        print(f"数据形状 - 图像: {images.shape}, 标签: {labels.shape}")
-        
-        # 创建tf.data.Dataset
-        tf_dataset = tf.data.Dataset.from_tensor_slices((images, labels))
-        
-        if is_training:
-            tf_dataset = tf_dataset.shuffle(10000, reshuffle_each_iteration=True)
-        
-        tf_dataset = tf_dataset.batch(self.config.BATCH_SIZE)
+        # 应用标签转换
         tf_dataset = tf_dataset.map(
-            self._prepare_labels, 
+            prepare_multi_output,
             num_parallel_calls=tf.data.AUTOTUNE
         )
+        
+        # 预取
         tf_dataset = tf_dataset.prefetch(tf.data.AUTOTUNE)
         
-        return tf_dataset
-    
-    def _prepare_labels(self, images, labels):
-        """将标签转换为多输出格式"""
-        outputs = {}
-        for i in range(self.config.CHARS_PER_LABEL):
-            outputs[f'char_{i}'] = labels[:, i]
+        print(f"  ✅ 数据集准备完成!")
         
-        return images, outputs
+        return tf_dataset
     
     def get_steps(self, dataset_size):
         """计算每个epoch的步数"""
