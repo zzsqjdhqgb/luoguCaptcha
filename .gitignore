@@ -4,3 +4,5 @@ venv/
 data/
 .vscode
 logs/
+tfrecords/
+/log_temp1_secondloss
