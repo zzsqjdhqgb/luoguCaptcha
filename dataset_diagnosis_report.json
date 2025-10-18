@@ -1,0 +1,249 @@
+{
+  "dataset_size": {
+    "train": 90000,
+    "test": 10000
+  },
+  "label_analysis": {
+    "train_unique_labels": 20,
+    "test_unique_labels": 20,
+    "total_unique_labels": 20,
+    "max_train_label_duplicates": 4533,
+    "labels_over_100_duplicates": 20,
+    "top_10_train_labels": [
+      [
+        "xNaB",
+        4533
+      ],
+      [
+        "p16y",
+        4531
+      ],
+      [
+        "8O1D",
+        4523
+      ],
+      [
+        "yblG",
+        4522
+      ],
+      [
+        "zdM2",
+        4518
+      ],
+      [
+        "SwFA",
+        4517
+      ],
+      [
+        "dH8D",
+        4516
+      ],
+      [
+        "OVmM",
+        4509
+      ],
+      [
+        "HRjP",
+        4509
+      ],
+      [
+        "PTKj",
+        4500
+      ]
+    ]
+  },
+  "label_leakage": {
+    "overlap_count": 20,
+    "overlap_percentage_train": 100.0,
+    "overlap_percentage_test": 100.0,
+    "only_in_train": 0,
+    "only_in_test": 0,
+    "overlap_samples_train": 90000,
+    "overlap_samples_test": 10000
+  },
+  "image_duplication": {
+    "train_unique_images": 361,
+    "train_duplicate_groups": 361,
+    "train_duplicated_samples": 89639,
+    "train_duplication_rate": 99.5988888888889,
+    "test_unique_images": 359,
+    "test_duplicate_groups": 353,
+    "test_duplicated_samples": 9641,
+    "test_duplication_rate": 96.41
+  },
+  "image_leakage": {
+    "overlap_count": 359,
+    "overlap_percentage_train": 99.44598337950139,
+    "overlap_percentage_test": 100.0,
+    "overlap_samples_train": 89924,
+    "overlap_samples_test": 10000
+  },
+  "character_distribution": {
+    "train_unique_chars": 44,
+    "test_unique_chars": 44,
+    "train_top_chars": [
+      [
+        "O",
+        5
+      ],
+      [
+        "d",
+        5
+      ],
+      [
+        "M",
+        4
+      ],
+      [
+        "8",
+        3
+      ],
+      [
+        "p",
+        3
+      ],
+      [
+        "y",
+        3
+      ],
+      [
+        "V",
+        2
+      ],
+      [
+        "m",
+        2
+      ],
+      [
+        "r",
+        2
+      ],
+      [
+        "z",
+        2
+      ],
+      [
+        "Z",
+        2
+      ],
+      [
+        "R",
+        2
+      ],
+      [
+        "b",
+        2
+      ],
+      [
+        "1",
+        2
+      ],
+      [
+        "H",
+        2
+      ],
+      [
+        "j",
+        2
+      ],
+      [
+        "P",
+        2
+      ],
+      [
+        "B",
+        2
+      ],
+      [
+        "q",
+        2
+      ],
+      [
+        "a",
+        2
+      ]
+    ],
+    "test_top_chars": [
+      [
+        "O",
+        5
+      ],
+      [
+        "d",
+        5
+      ],
+      [
+        "M",
+        4
+      ],
+      [
+        "y",
+        3
+      ],
+      [
+        "8",
+        3
+      ],
+      [
+        "p",
+        3
+      ],
+      [
+        "b",
+        2
+      ],
+      [
+        "l",
+        2
+      ],
+      [
+        "V",
+        2
+      ],
+      [
+        "m",
+        2
+      ],
+      [
+        "P",
+        2
+      ],
+      [
+        "T",
+        2
+      ],
+      [
+        "j",
+        2
+      ],
+      [
+        "Z",
+        2
+      ],
+      [
+        "F",
+        2
+      ],
+      [
+        "A",
+        2
+      ],
+      [
+        "R",
+        2
+      ],
+      [
+        "H",
+        2
+      ],
+      [
+        "D",
+        2
+      ],
+      [
+        "a",
+        2
+      ]
+    ]
+  }
+}
