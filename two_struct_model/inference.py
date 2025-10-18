@@ -17,31 +17,28 @@ class CaptchaPredictor:
     
     def preprocess_image(self, image_path):
         """预处理图像"""
-        # 读取图像
-        img = Image.open(image_path).convert('L')  # 转为灰度图
+        img = Image.open(image_path).convert('L')
         img = img.resize((self.img_width, self.img_height))
         
-        # 转为numpy数组并归一化
         img_array = np.array(img, dtype=np.float32) / 255.0
-        img_array = np.expand_dims(img_array, axis=-1)  # 添加通道维度
-        img_array = np.expand_dims(img_array, axis=0)   # 添加批次维度
+        img_array = np.expand_dims(img_array, axis=-1)
+        img_array = np.expand_dims(img_array, axis=0)
         
         return img_array, img
     
     def predict(self, image_path, visualize=True):
         """预测验证码"""
-        # 预处理
         img_array, original_img = self.preprocess_image(image_path)
         
         # 预测
         predictions = self.model.predict(img_array, verbose=0)
+        # predictions shape: (1, 4, 256)
         
-        # 解码预测结果
         predicted_chars = []
         confidences = []
         
-        for i in range(len(predictions)):
-            char_probs = predictions[i][0]
+        for i in range(4):
+            char_probs = predictions[0, i, :]  # (256,)
             predicted_code = np.argmax(char_probs)
             confidence = char_probs[predicted_code]
             
@@ -51,10 +48,8 @@ class CaptchaPredictor:
         result = ''.join(predicted_chars)
         avg_confidence = np.mean(confidences)
         
-        # 可视化
         if visualize:
-            self._visualize_prediction(
-                original_img, 
+            self._visualize_prediction(                original_img, 
                 result, 
                 confidences, 
                 avg_confidence
@@ -103,7 +98,6 @@ class CaptchaPredictor:
         """批量预测文件夹中的图像"""
         results = []
         
-        # 获取所有图像文件
         image_files = [f for f in os.listdir(image_folder) 
                       if f.lower().endswith(('.png', '.jpg', '.jpeg', '.bmp'))]
         
@@ -127,7 +121,6 @@ class CaptchaPredictor:
             except Exception as e:
                 print(f"❌ {img_file}: 预测失败 - {str(e)}")
         
-        # 保存结果
         if save_results and results:
             import csv
             output_file = os.path.join(image_folder, 'predictions.csv')
@@ -157,7 +150,7 @@ class CaptchaPredictor:
 
 
 def main():
-    """主函数 - 演示用法"""
+    """主函数"""
     import argparse
     
     parser = argparse.ArgumentParser(description='洛谷验证码识别推理脚本')
@@ -178,16 +171,13 @@ def main():
     else:
         model_path = args.model
     
-    # 检查模型是否存在
     if not os.path.exists(model_path):
         print(f"❌ 错误: 模型文件不存在: {model_path}")
         print("请先运行 train.py 训练模型")
         return
     
-    # 创建预测器
     predictor = CaptchaPredictor(model_path)
     
-    # 单张图像预测
     if args.image:
         if not os.path.exists(args.image):
             print(f"❌ 错误: 图像文件不存在: {args.image}")
@@ -202,7 +192,6 @@ def main():
         for i, (char, conf) in enumerate(zip(result, char_confs)):
             print(f"  位置 {i} ('{char}'): {conf:.2%}")
     
-    # 批量预测
     elif args.folder:
         if not os.path.exists(args.folder):
             print(f"❌ 错误: 文件夹不存在: {args.folder}")
@@ -210,7 +199,6 @@ def main():
         
         results = predictor.batch_predict(args.folder)
         
-        # 统计
         if results:
             avg_conf = np.mean([r['avg_confidence'] for r in results])
             print(f"\n批量预测完成！")

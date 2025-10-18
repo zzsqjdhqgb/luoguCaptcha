@@ -32,15 +32,14 @@ class Config:
     # 验证码配置
     CHARS_PER_LABEL = 4
     CHAR_SIZE = 256
-    N_CLASSES = CHAR_SIZE
     
     # 训练配置 - 阶段1 (CNN+Dense)
     BATCH_SIZE = 256
-    EPOCHS_STAGE1 = 20  # 第一阶段训练轮数
+    EPOCHS_STAGE1 = 15
     LEARNING_RATE_STAGE1 = 0.001
     
     # 训练配置 - 阶段2 (CNN冻结+LSTM)
-    EPOCHS_STAGE2 = 30  # 第二阶段训练轮数
+    EPOCHS_STAGE2 = 30
     LEARNING_RATE_STAGE2 = 0.0005
     
     # 路径配置
@@ -57,137 +56,111 @@ class Config:
 
 config = Config()
 
+
 class ModelBuilder:
-    """模型构建器 - 支持两阶段架构"""
+    """模型构建器 - 严格按照表现良好的架构"""
     
     def __init__(self, config):
         self.config = config
     
-    def build_cnn_backbone(self, inputs):
-        """构建CNN骨干网络（两阶段共享）"""
-        x = layers.Conv2D(32, (3, 3), padding='same', activation='relu', name='conv1')(inputs)
-        x = layers.BatchNormalization(name='bn1')(x)
-        x = layers.MaxPooling2D(pool_size=(2, 2), name='pool1')(x)
-        
-        x = layers.Conv2D(64, (3, 3), padding='same', activation='relu', name='conv2')(x)
-        x = layers.BatchNormalization(name='bn2')(x)
-        x = layers.MaxPooling2D(pool_size=(2, 2), name='pool2')(x)
-        
-        x = layers.Conv2D(128, (3, 3), padding='same', activation='relu', name='conv3')(x)
-        x = layers.BatchNormalization(name='bn3')(x)
-        x = layers.MaxPooling2D(pool_size=(2, 2), name='pool3')(x)
-        
-        x = layers.Conv2D(256, (3, 3), padding='same', activation='relu', name='conv4')(x)
-        x = layers.BatchNormalization(name='bn4')(x)
-        x = layers.MaxPooling2D(pool_size=(2, 2), name='pool4')(x)
-        
-        return x
-    
     def build_stage1_model(self):
-        """阶段1: CNN + Dense (稳定训练)"""
-        inputs = layers.Input(
-            shape=(self.config.IMG_HEIGHT, self.config.IMG_WIDTH, self.config.IMG_CHANNELS),
-            name='input_image'
+        """阶段1: 严格按照你提供的CNN+Dense架构"""
+        inputs = keras.Input(
+            shape=(self.config.IMG_HEIGHT, self.config.IMG_WIDTH, self.config.IMG_CHANNELS), 
+            name="input"
         )
         
-        # CNN骨干
-        x = self.build_cnn_backbone(inputs)
+        # 完全按照你的架构
+        x = layers.Conv2D(32, 3, padding="same", activation="relu")(inputs)
+        x = layers.BatchNormalization()(x)
+        x = layers.MaxPooling2D(2)(x)
         
-        # Dense分类头
-        x = layers.Flatten(name='flatten')(x)
-        x = layers.Dropout(0.5, name='dropout1')(x)
-        x = layers.Dense(512, activation='relu', name='dense_512')(x)
-        x = layers.Dropout(0.4, name='dropout2')(x)
+        x = layers.Conv2D(64, 3, padding="same", activation="relu")(x)
+        x = layers.BatchNormalization()(x)
+        x = layers.MaxPooling2D(2)(x)
         
-        # 多输出层
-        outputs = []
-        for i in range(self.config.CHARS_PER_LABEL):
-            out = layers.Dense(
-                self.config.N_CLASSES,
-                activation='softmax',
-                name=f'char_{i}'
-            )(x)
-            outputs.append(out)
+        x = layers.Conv2D(128, 3, padding="same", activation="relu")(x)
+        x = layers.BatchNormalization()(x)
+        x = layers.MaxPooling2D(2)(x)
         
-        model = Model(inputs=inputs, outputs=outputs, name='Stage1_CNN_Dense')
+        x = layers.Flatten()(x)
+        x = layers.Dropout(0.5)(x)
+        x = layers.Dense(512, activation="relu")(x)
+        x = layers.Dense(
+            self.config.CHARS_PER_LABEL * self.config.CHAR_SIZE, 
+            activation="softmax"
+        )(x)
+        outputs = layers.Reshape((self.config.CHARS_PER_LABEL, self.config.CHAR_SIZE))(x)
+        
+        model = keras.Model(inputs=inputs, outputs=outputs, name="Stage1_LuoguCaptcha")
         return model
     
     def build_stage2_model(self, pretrained_stage1_path):
-        """阶段2: 冻结CNN + LSTM (精细调优)"""
+        """阶段2: 保留CNN骨干，替换为LSTM"""
         # 加载阶段1模型
         stage1_model = keras.models.load_model(pretrained_stage1_path)
         
         # 创建新输入
-        inputs = layers.Input(
-            shape=(self.config.IMG_HEIGHT, self.config.IMG_WIDTH, self.config.IMG_CHANNELS),
-            name='input_image'
+        inputs = keras.Input(
+            shape=(self.config.IMG_HEIGHT, self.config.IMG_WIDTH, self.config.IMG_CHANNELS), 
+            name="input"
         )
         
-        # 提取CNN骨干（到pool4层）
+        # 提取CNN部分（到最后一个MaxPooling2D）
         x = inputs
         for layer in stage1_model.layers:
-            if layer.name == 'pool4':
+            if isinstance(layer, layers.MaxPooling2D):
+                # 冻结CNN层
+                layer.trainable = False
                 x = layer(x)
-                break
-            elif 'input' not in layer.name:
+            elif isinstance(layer, (layers.Conv2D, layers.BatchNormalization)):
+                # 冻结CNN层
+                layer.trainable = False
                 x = layer(x)
-        
-        # 冻结CNN层
-        for layer in stage1_model.layers:
-            if layer.name in ['flatten', 'dense_512'] or 'dropout' in layer.name or 'char_' in layer.name:
+            elif isinstance(layer, (layers.Flatten, layers.Dense, layers.Dropout, layers.Reshape)):
+                # 停止，不使用Dense部分
                 break
-            layer.trainable = False
         
-        # 添加LSTM层
-        shape = x.shape
+        # 保存CNN输出的shape用于Reshape
+        cnn_output = x
+        shape = cnn_output.shape  # (batch, height, width, channels)
+        
+        # 将CNN特征图转换为序列 (时间步, 特征)
+        # shape[1] = height, shape[2] = width, shape[3] = channels
         x = layers.Reshape(target_shape=(shape[2], shape[1] * shape[3]), name='reshape')(x)
-        x = layers.Dense(128, activation='relu', name='dense_before_rnn')(x)
-        x = layers.Dropout(0.3, name='dropout_rnn1')(x)
         
-        # 双向LSTM
+        # LSTM层
+        x = layers.Dense(128, activation='relu', name='dense_before_lstm')(x)
+        x = layers.Dropout(0.3)(x)
+        
         x = layers.Bidirectional(
             layers.LSTM(128, return_sequences=True, dropout=0.2),
             name='bilstm1'
         )(x)
         x = layers.Bidirectional(
-            layers.LSTM(128, return_sequences=True, dropout=0.2),
+            layers.LSTM(128, return_sequences=False, dropout=0.2),
             name='bilstm2'
         )(x)
         
-        # 全局特征聚合
-        x = layers.GlobalAveragePooling1D(name='global_pool')(x)
-        x = layers.Dense(512, activation='relu', name='dense_final')(x)
-        x = layers.Dropout(0.4, name='dropout_final')(x)
+        # 分类头
+        x = layers.Dense(512, activation='relu')(x)
+        x = layers.Dropout(0.5)(x)
+        x = layers.Dense(
+            self.config.CHARS_PER_LABEL * self.config.CHAR_SIZE, 
+            activation="softmax"
+        )(x)
+        outputs = layers.Reshape((self.config.CHARS_PER_LABEL, self.config.CHAR_SIZE))(x)
         
-        # 多输出层
-        outputs = []
-        for i in range(self.config.CHARS_PER_LABEL):
-            out = layers.Dense(
-                self.config.N_CLASSES,
-                activation='softmax',
-                name=f'char_{i}'
-            )(x)
-            outputs.append(out)
-        
-        model = Model(inputs=inputs, outputs=outputs, name='Stage2_CNN_LSTM')
+        model = keras.Model(inputs=inputs, outputs=outputs, name="Stage2_CNN_LSTM")
         return model
     
     def compile_model(self, model, learning_rate):
-        """编译模型"""
-        optimizer = keras.optimizers.Adam(learning_rate=learning_rate)
-        
-        losses = {f'char_{i}': 'sparse_categorical_crossentropy' 
-                  for i in range(self.config.CHARS_PER_LABEL)}
-        
-        metrics = {f'char_{i}': ['accuracy'] 
-                   for i in range(self.config.CHARS_PER_LABEL)}
-        
+        """编译模型 - 使用和你相同的配置"""
         model.compile(
-            optimizer=optimizer,
-            loss=losses,
-            metrics=metrics
+            optimizer=keras.optimizers.Adam(learning_rate=learning_rate),
+            loss="sparse_categorical_crossentropy",
+            metrics=["accuracy"],
         )
-        
         return model
 
 
@@ -217,16 +190,22 @@ class DataLoader:
             train_ds = dataset_dict["train"]
             self.train_size = len(train_ds)
             for example in tqdm(train_ds, desc="正在处理训练集"):
-                image = np.array(example["image"], dtype=np.float32) / 255.0
+                image = np.array(example["image"], dtype=np.float32)
+                # 判断是否需要归一化（检查值是否在0-1范围内）
+                if image.max() > 1.0:
+                    image = image / 255.0
                 label = example["label"]
                 writer.write(self._serialize_example(image, label))
-        
+
         # 处理验证集
         with tf.io.TFRecordWriter(self.config.TEST_TFRECORD_PATH) as writer:
             val_ds = dataset_dict["test"]
             self.val_size = len(val_ds)
             for example in tqdm(val_ds, desc="正在处理验证集"):
-                image = np.array(example["image"], dtype=np.float32) / 255.0
+                image = np.array(example["image"], dtype=np.float32)
+                # 判断是否需要归一化（检查值是否在0-1范围内）
+                if image.max() > 1.0:
+                    image = image / 255.0
                 label = example["label"]
                 writer.write(self._serialize_example(image, label))
         
@@ -237,7 +216,7 @@ class DataLoader:
         print(f"TFRecord 缓存创建完成。训练集: {self.train_size}, 验证集: {self.val_size}")
 
     def _parse_tfrecord_fn(self, example_proto):
-        """解析TFRecord Example Proto"""
+        """解析TFRecord Example Proto - 返回 (image, label) 格式"""
         feature_description = {
             "image": tf.io.FixedLenFeature([self.config.IMG_HEIGHT * self.config.IMG_WIDTH], tf.float32),
             "label": tf.io.FixedLenFeature([self.config.CHARS_PER_LABEL], tf.int64),
@@ -246,16 +225,15 @@ class DataLoader:
         image = tf.reshape(example["image"], (self.config.IMG_HEIGHT, self.config.IMG_WIDTH, self.config.IMG_CHANNELS))
         label = tf.cast(example["label"], tf.int32)
         
-        outputs = {f'char_{i}': label[i] for i in range(self.config.CHARS_PER_LABEL)}
-        
-        return image, outputs
+        # 直接返回 (image, label)，label shape 为 (4,)
+        return image, label
 
-    def _augment_data(self, image, labels):
+    def _augment_data(self, image, label):
         """应用数据增强"""
         image = tf.image.random_brightness(image, max_delta=0.1)
         image = tf.image.random_contrast(image, lower=0.9, upper=1.1)
         image = tf.clip_by_value(image, 0.0, 1.0)
-        return image, labels
+        return image, label
 
     def get_datasets(self):
         """获取准备好的训练和验证数据集"""
@@ -276,16 +254,16 @@ class DataLoader:
         train_dataset = (
             raw_train_ds
             .map(self._parse_tfrecord_fn, num_parallel_calls=tf.data.AUTOTUNE)
-            .shuffle(self.train_size)
+            .shuffle(min(10000, self.train_size))
             .map(self._augment_data, num_parallel_calls=tf.data.AUTOTUNE)
-            .batch(self.config.BATCH_SIZE, drop_remainder=True)
+            .batch(self.config.BATCH_SIZE)
             .prefetch(tf.data.AUTOTUNE)
         )
         
         val_dataset = (
             raw_val_ds
             .map(self._parse_tfrecord_fn, num_parallel_calls=tf.data.AUTOTUNE)
-            .batch(self.config.BATCH_SIZE, drop_remainder=True)
+            .batch(self.config.BATCH_SIZE)
             .prefetch(tf.data.AUTOTUNE)
         )
         
@@ -309,18 +287,17 @@ class CaptchaAccuracyCallback(keras.callbacks.Callback):
         correct = 0
         total = 0
         
-        for images, labels_dict in self.validation_data:
+        for images, labels in self.validation_data:
             predictions = self.model.predict(images, verbose=0)
+            # predictions shape: (batch, 4, 256)
+            # labels shape: (batch, 4)
             
             batch_size = images.shape[0]
             for i in range(batch_size):
-                true_label = [labels_dict[f'char_{j}'].numpy()[i] 
-                             for j in range(self.config.CHARS_PER_LABEL)]
+                true_label = labels[i].numpy()  # (4,)
+                pred_label = np.argmax(predictions[i], axis=1)  # (4,)
                 
-                pred_label = [np.argmax(predictions[j][i]) 
-                             for j in range(self.config.CHARS_PER_LABEL)]
-                
-                if true_label == pred_label:
+                if np.array_equal(true_label, pred_label):
                     correct += 1
                 total += 1
         
@@ -338,50 +315,44 @@ def plot_training_curves(history, config, stage_name, save_path):
     """绘制训练曲线"""
     fig, axes = plt.subplots(2, 2, figsize=(15, 10))
     
-    # 1. 总Loss曲线
+    # 1. Loss曲线
     axes[0, 0].plot(history.history['loss'], label='Train Loss', linewidth=2)
     axes[0, 0].plot(history.history['val_loss'], label='Val Loss', linewidth=2)
-    axes[0, 0].set_title(f'{stage_name} - Total Loss', fontsize=14, fontweight='bold')
+    axes[0, 0].set_title(f'{stage_name} - Loss', fontsize=14, fontweight='bold')
     axes[0, 0].set_xlabel('Epoch')
     axes[0, 0].set_ylabel('Loss')
     axes[0, 0].legend()
     axes[0, 0].grid(True, alpha=0.3)
     
-    # 2. 各位置平均准确率
-    train_acc_avg = []
-    val_acc_avg = []
-    for epoch in range(len(history.history['loss'])):
-        train_avg = sum(history.history[f'char_{i}_accuracy'][epoch] for i in range(4)) / 4
-        val_avg = sum(history.history[f'val_char_{i}_accuracy'][epoch] for i in range(4)) / 4
-        train_acc_avg.append(train_avg)
-        val_acc_avg.append(val_avg)
-    
-    axes[0, 1].plot(train_acc_avg, label='Train Avg Acc', linewidth=2)
-    axes[0, 1].plot(val_acc_avg, label='Val Avg Acc', linewidth=2)
-    axes[0, 1].set_title(f'{stage_name} - Average Accuracy', fontsize=14, fontweight='bold')
+    # 2. 准确率曲线
+    axes[0, 1].plot(history.history['accuracy'], label='Train Accuracy', linewidth=2)
+    axes[0, 1].plot(history.history['val_accuracy'], label='Val Accuracy', linewidth=2)
+    axes[0, 1].set_title(f'{stage_name} - Accuracy', fontsize=14, fontweight='bold')
     axes[0, 1].set_xlabel('Epoch')
     axes[0, 1].set_ylabel('Accuracy')
     axes[0, 1].legend()
     axes[0, 1].grid(True, alpha=0.3)
     axes[0, 1].set_ylim([0, 1.05])
     
-    # 3. 各位置准确率对比
-    for i in range(4):
-        axes[1, 0].plot(history.history[f'char_{i}_accuracy'], 
-                       label=f'Char {i}', linewidth=1.5)
-    axes[1, 0].set_title(f'{stage_name} - Per-Position Accuracy (Train)', fontsize=14, fontweight='bold')
-    axes[1, 0].set_xlabel('Epoch')
-    axes[1, 0].set_ylabel('Accuracy')
-    axes[1, 0].legend()
-    axes[1, 0].grid(True, alpha=0.3)
-    axes[1, 0].set_ylim([0, 1.05])
+    # 3. 完整验证码准确率（如果有）
+    if 'val_captcha_accuracy' in history.history:
+        axes[1, 0].plot(history.history['val_captcha_accuracy'], 
+                       label='Captcha Accuracy', linewidth=2, color='green')
+        axes[1, 0].set_title(f'{stage_name} - Full Captcha Accuracy', 
+                           fontsize=14, fontweight='bold')
+        axes[1, 0].set_xlabel('Epoch')
+        axes[1, 0].set_ylabel('Accuracy')
+        axes[1, 0].legend()
+        axes[1, 0].grid(True, alpha=0.3)
+        axes[1, 0].set_ylim([0, 1.05])
     
     # 4. 过拟合诊断
     gap = [history.history['loss'][i] - history.history['val_loss'][i] 
            for i in range(len(history.history['loss']))]
     axes[1, 1].plot(gap, label='Train - Val Loss Gap', linewidth=2, color='red')
     axes[1, 1].axhline(y=0, color='green', linestyle='--', label='No Gap')
-    axes[1, 1].set_title(f'{stage_name} - Overfitting Diagnosis', fontsize=14, fontweight='bold')
+    axes[1, 1].set_title(f'{stage_name} - Overfitting Diagnosis', 
+                        fontsize=14, fontweight='bold')
     axes[1, 1].set_xlabel('Epoch')
     axes[1, 1].set_ylabel('Loss Gap')
     axes[1, 1].legend()
@@ -394,7 +365,7 @@ def plot_training_curves(history, config, stage_name, save_path):
 
 
 def train_stage1(train_dataset, val_dataset, data_loader, config):
-    """阶段1训练: CNN + Dense"""
+    """阶段1训练: CNN + Dense（严格按照你的架构）"""
     print("\n" + "="*80)
     print("阶段1: 训练 CNN + Dense 基础模型")
     print("="*80)
@@ -407,31 +378,24 @@ def train_stage1(train_dataset, val_dataset, data_loader, config):
     print("\n阶段1 模型架构:")
     model.summary()
     
-    # 计算步数
-    train_steps = data_loader.get_steps(data_loader.train_size)
-    val_steps = data_loader.get_steps(data_loader.val_size)
-    
-    # 回调函数
+    # 回调函数 - 使用和你相同的配置
     callbacks = [
         keras.callbacks.ModelCheckpoint(
             config.STAGE1_MODEL_PATH,
             save_best_only=True,
             monitor='val_loss',
-            mode='min',
-            verbose=1
-        ),
-        keras.callbacks.ReduceLROnPlateau(
-            monitor='val_loss',
-            factor=0.5,
-            patience=3,
-            min_lr=1e-6,
             verbose=1
         ),
         keras.callbacks.EarlyStopping(
-            monitor='val_loss',
-            patience=8,
-            restore_best_weights=True,
-            verbose=1
+            monitor="val_loss", 
+            patience=5, 
+            restore_best_weights=True
+        ),
+        keras.callbacks.ReduceLROnPlateau(
+            monitor="val_loss", 
+            factor=0.2, 
+            patience=3, 
+            min_lr=1e-5
         ),
         CaptchaAccuracyCallback(val_dataset, config, stage_name="Stage1"),
         keras.callbacks.TensorBoard(
@@ -446,8 +410,6 @@ def train_stage1(train_dataset, val_dataset, data_loader, config):
         train_dataset,
         validation_data=val_dataset,
         epochs=config.EPOCHS_STAGE1,
-        steps_per_epoch=train_steps,
-        validation_steps=val_steps,
         callbacks=callbacks,
         verbose=1
     )
@@ -495,31 +457,24 @@ def train_stage2(train_dataset, val_dataset, data_loader, config):
     print(f"冻结层 ({len(frozen_layers)}): {frozen_layers}")
     print(f"可训练层 ({len(trainable_layers)}): {trainable_layers}")
     
-    # 计算步数
-    train_steps = data_loader.get_steps(data_loader.train_size)
-    val_steps = data_loader.get_steps(data_loader.val_size)
-    
     # 回调函数
     callbacks = [
         keras.callbacks.ModelCheckpoint(
             config.STAGE2_MODEL_PATH,
             save_best_only=True,
             monitor='val_loss',
-            mode='min',
-            verbose=1
-        ),
-        keras.callbacks.ReduceLROnPlateau(
-            monitor='val_loss',
-            factor=0.5,
-            patience=3,
-            min_lr=1e-7,
             verbose=1
         ),
         keras.callbacks.EarlyStopping(
-            monitor='val_loss',
-            patience=10,
-            restore_best_weights=True,
-            verbose=1
+            monitor="val_loss", 
+            patience=8, 
+            restore_best_weights=True
+        ),
+        keras.callbacks.ReduceLROnPlateau(
+            monitor="val_loss", 
+            factor=0.2, 
+            patience=4, 
+            min_lr=1e-6
         ),
         CaptchaAccuracyCallback(val_dataset, config, stage_name="Stage2"),
         keras.callbacks.TensorBoard(
@@ -534,8 +489,6 @@ def train_stage2(train_dataset, val_dataset, data_loader, config):
         train_dataset,
         validation_data=val_dataset,
         epochs=config.EPOCHS_STAGE2,
-        steps_per_epoch=train_steps,
-        validation_steps=val_steps,
         callbacks=callbacks,
         verbose=1
     )
@@ -555,7 +508,7 @@ def train_stage2(train_dataset, val_dataset, data_loader, config):
     return model, history
 
 
-def evaluate_and_compare(train_dataset, val_dataset, config):
+def evaluate_and_compare(val_dataset, config):
     """评估并对比两个阶段的模型"""
     print("\n" + "="*80)
     print("模型评估与对比")
@@ -570,18 +523,15 @@ def evaluate_and_compare(train_dataset, val_dataset, config):
         correct = 0
         total = 0
         
-        for images, labels_dict in dataset:
+        for images, labels in dataset:
             predictions = model.predict(images, verbose=0)
             
             batch_size = images.shape[0]
             for i in range(batch_size):
-                true_label = [labels_dict[f'char_{j}'].numpy()[i] 
-                             for j in range(config.CHARS_PER_LABEL)]
+                true_label = labels[i].numpy()
+                pred_label = np.argmax(predictions[i], axis=1)
                 
-                pred_label = [np.argmax(predictions[j][i]) 
-                             for j in range(config.CHARS_PER_LABEL)]
-                
-                if true_label == pred_label:
+                if np.array_equal(true_label, pred_label):
                     correct += 1
                 total += 1
         
@@ -630,7 +580,10 @@ def train():
     data_loader = DataLoader(config)
     train_dataset, val_dataset = data_loader.get_datasets()
     
-    print(f"\n每epoch训练步数: {data_loader.get_steps(data_loader.train_size)}")
+    print(f"\n数据集信息:")
+    print(f"训练集大小: {data_loader.train_size}")
+    print(f"验证集大小: {data_loader.val_size}")
+    print(f"每epoch训练步数: {data_loader.get_steps(data_loader.train_size)}")
     print(f"每epoch验证步数: {data_loader.get_steps(data_loader.val_size)}")
     
     # 阶段1: 训练 CNN + Dense
@@ -651,7 +604,6 @@ def train():
     
     # 评估对比
     stage1_acc, stage2_acc = evaluate_and_compare(
-        train_dataset, 
         val_dataset, 
         config
     )
@@ -662,6 +614,9 @@ def train():
     print(f"阶段1模型: {config.STAGE1_MODEL_PATH}")
     print(f"阶段2模型: {config.STAGE2_MODEL_PATH}")
     print(f"最终模型: {config.FINAL_MODEL_PATH}")
+    print(f"\n阶段1准确率: {stage1_acc:.4f}")
+    print(f"阶段2准确率: {stage2_acc:.4f}")
+    print(f"性能提升: {(stage2_acc - stage1_acc)*100:+.2f}%")
     print("="*80)
     
     return {
@@ -676,13 +631,4 @@ def train():
 
 if __name__ == "__main__":
     results = train()
-    print("\n✅✅ 所有训练流程已完成！")
-    
-    # 打印最终统计
-    print("\n" + "="*80)
-    print("训练总结")
-    print("="*80)
-    print(f"阶段1 (CNN+Dense) 最终准确率: {results['stage1_accuracy']:.4f}")
-    print(f"阶段2 (CNN+LSTM) 最终准确率: {results['stage2_accuracy']:.4f}")
-    print(f"性能提升: {(results['stage2_accuracy'] - results['stage1_accuracy'])*100:+.2f}%")
-    print("="*80)
+    print("\n✅ 所有训练流程已完成！")
