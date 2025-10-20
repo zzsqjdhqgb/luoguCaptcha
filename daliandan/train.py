@@ -35,12 +35,12 @@ class Config:
     TFRECORD_DIR = "data/luogu_captcha_tfrecord"
     
     # 训练参数
-    EPOCHS_STAGE1 = 100   # 阶段1: 普通CNN + 普通LSTM
-    EPOCHS_STAGE2A = 50   # 阶段2A: 普通CNN(冻结) + Attention LSTM
-    EPOCHS_STAGE2B = 50   # 阶段2B: 残差CNN + 普通LSTM(冻结)
-    EPOCHS_STAGE3A = 30   # 阶段3A: 冻结ResNet CNN, 微调Attention LSTM
-    EPOCHS_STAGE3B = 30   # 阶段3B: 冻结Attention LSTM, 微调ResNet CNN
-    EPOCHS_STAGE3C = 40   # 阶段3C: 全部解冻, 最终微调
+    EPOCHS_STAGE1 = 30   # 阶段1: 普通CNN + 普通LSTM
+    EPOCHS_STAGE2A = 30   # 阶段2A: 普通CNN(冻结) + Attention LSTM
+    EPOCHS_STAGE2B = 30   # 阶段2B: 残差CNN + 普通LSTM(冻结)
+    EPOCHS_STAGE3A = 50   # 阶段3A: 冻结ResNet CNN, 微调Attention LSTM
+    EPOCHS_STAGE3B = 50   # 阶段3B: 冻结Attention LSTM, 微调ResNet CNN
+    EPOCHS_STAGE3C = 100   # 阶段3C: 全部解冻, 最终微调
     
     # 模型路径
     STAGE1_MODEL_PATH = "models/bigdan_stage1_plain_cnn_lstm.keras"
@@ -257,39 +257,67 @@ def build_stage3_merged_model(stage2a_model, stage2b_model):
     """
     inputs = keras.Input(shape=(Config.IMG_HEIGHT, Config.IMG_WIDTH, 1), name="input")
     
-    # 从stage2b复制残差CNN
-    x = inputs
-    for layer in stage2b_model.layers[1:]:  # 跳过input层
-        if 'reshape' in layer.name or 'bilstm' in layer.name or 'dropout' in layer.name or 'dense' in layer.name:
-            break
-        new_layer = layer.__class__.from_config(layer.get_config())
-        new_layer.build(x.shape)
-        new_layer.set_weights(layer.get_weights())
-        x = new_layer(x)
+    # 重建残差CNN结构 (不能直接复制层因为有残差连接)
+    x = layers.Conv2D(64, 3, padding="same", activation="relu", name="resnet_init_conv")(inputs)
+    x = layers.BatchNormalization(name="resnet_init_bn")(x)
+    
+    x = build_resnet_cnn_block(x, 64, "resnet_block1")
+    x = layers.MaxPooling2D((2, 2), name="resnet_pool1")(x)
+    
+    x = build_resnet_cnn_block(x, 128, "resnet_block2")
+    x = layers.MaxPooling2D((2, 2), name="resnet_pool2")(x)
     
     # 转换为序列
     cnn_shape = x.shape
     x = layers.Reshape((cnn_shape[1] * cnn_shape[2], cnn_shape[3]), name="reshape_to_seq")(x)
     
-    # 从stage2a复制Attention LSTM
-    found_reshape = False
-    for layer in stage2a_model.layers:
-        if 'reshape_to_seq' in layer.name:
-            found_reshape = True
-            continue
-        if found_reshape and ('attn' in layer.name or 'dense' in layer.name or 'reshape_output' in layer.name):
-            if isinstance(layer, layers.Reshape) and 'output' in layer.name:
-                # 输出层reshape
-                outputs = layer(x)
-                break
-            new_layer = layer.__class__.from_config(layer.get_config())
-            new_layer.build(x.shape)
-            new_layer.set_weights(layer.get_weights())
-            x = new_layer(x)
+    # 重建Attention LSTM结构
+    attention_output = layers.MultiHeadAttention(
+        num_heads=4, key_dim=64, dropout=0.1, name="self_attention"
+    )(x, x)
+    x = layers.LayerNormalization(name="attn_norm")(x + attention_output)
     
+    x = layers.Bidirectional(layers.LSTM(128, return_sequences=True), name="attn_bilstm_1")(x)
+    x = layers.Dropout(0.3, name="attn_dropout_1")(x)
+    x = layers.Bidirectional(layers.LSTM(128, return_sequences=False), name="attn_bilstm_2")(x)
+    x = layers.Dropout(0.3, name="attn_dropout_2")(x)
+    
+    # 输出层
+    x = layers.Dense(Config.CHARS_PER_LABEL * Config.CHAR_SIZE, activation="softmax", name="dense_output")(x)
+    outputs = layers.Reshape((Config.CHARS_PER_LABEL, Config.CHAR_SIZE), name="reshape_output")(x)
+    
+    # 创建模型
     model = keras.Model(inputs=inputs, outputs=outputs, name="Stage3_Merged_ResNet_Attention")
+    
+    # 从stage2b复制ResNet CNN的权重
+    print("Copying ResNet CNN weights from stage2b...")
+    for layer in model.layers:
+        if 'resnet' in layer.name or ('reshape_to_seq' in layer.name):
+            # 在stage2b中找到对应层
+            for src_layer in stage2b_model.layers:
+                if src_layer.name == layer.name:
+                    try:
+                        layer.set_weights(src_layer.get_weights())
+                        print(f"  ✓ Copied weights: {layer.name}")
+                    except:
+                        print(f"  ⚠ Skip: {layer.name} (no weights or shape mismatch)")
+                    break
+    
+    # 从stage2a复制Attention LSTM的权重
+    print("Copying Attention LSTM weights from stage2a...")
+    for layer in model.layers:
+        if 'attn' in layer.name or 'self_attention' in layer.name or 'dense_output' in layer.name or 'reshape_output' in layer.name:
+            # 在stage2a中找到对应层
+            for src_layer in stage2a_model.layers:
+                if src_layer.name == layer.name:
+                    try:
+                        layer.set_weights(src_layer.get_weights())
+                        print(f"  ✓ Copied weights: {layer.name}")
+                    except:
+                        print(f"  ⚠ Skip: {layer.name} (no weights or shape mismatch)")
+                    break
+    
     return model
-
 
 # ========== 训练阶段 ==========
 class InterfaceStandardTrainer:
