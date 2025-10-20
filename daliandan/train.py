@@ -36,7 +36,9 @@ class Config:
     EPOCHS_STAGE1 = 100   # 阶段1: 普通CNN + 普通LSTM
     EPOCHS_STAGE2A = 50   # 阶段2A: 普通CNN(冻结) + Attention LSTM
     EPOCHS_STAGE2B = 50   # 阶段2B: 残差CNN + 普通LSTM(冻结)
-    EPOCHS_STAGE3 = 100   # 阶段3: 残差CNN + Attention LSTM (渐进解冻)
+    EPOCHS_STAGE3A = 30   # 阶段3A: 冻结ResNet CNN, 微调Attention LSTM
+    EPOCHS_STAGE3B = 30   # 阶段3B: 冻结Attention LSTM, 微调ResNet CNN
+    EPOCHS_STAGE3C = 40   # 阶段3C: 全部解冻, 最终微调
     
     # 模型路径
     STAGE1_MODEL_PATH = "models/stage1_plain_cnn_lstm.keras"
@@ -510,9 +512,9 @@ class InterfaceStandardTrainer:
         print("STAGE 3: Merging ResNet CNN + Attention LSTM (Progressive Fine-tuning)")
         print("="*70)
         print("\n📌 Purpose: Perfect alignment through gradual unfreezing")
-        print("   Phase 3A: Freeze ResNet CNN → Adapt Attention LSTM")
-        print("   Phase 3B: Freeze Attention LSTM → Adapt ResNet CNN")
-        print("   Phase 3C: Unfreeze all → Final convergence\n")
+        print(f"   Phase 3A: Freeze ResNet CNN → Adapt Attention LSTM ({Config.EPOCHS_STAGE3A} epochs)")
+        print(f"   Phase 3B: Freeze Attention LSTM → Adapt ResNet CNN ({Config.EPOCHS_STAGE3B} epochs)")
+        print(f"   Phase 3C: Unfreeze all → Final convergence ({Config.EPOCHS_STAGE3C} epochs)\n")
         
         if Config.SKIP_STAGE3 and os.path.exists(Config.FINAL_MODEL_PATH):
             print(f"⊙ Skipping Stage 3 (loading from {Config.FINAL_MODEL_PATH})")
@@ -528,7 +530,7 @@ class InterfaceStandardTrainer:
         
         # === Phase 3A: 冻结CNN, 微调LSTM ===
         print("\n" + "-"*70)
-        print("Phase 3A: Frozen ResNet CNN → Fine-tune Attention LSTM")
+        print(f"Phase 3A: Frozen ResNet CNN → Fine-tune Attention LSTM ({Config.EPOCHS_STAGE3A} epochs)")
         print("-"*70)
         
         # 冻结CNN层
@@ -547,7 +549,7 @@ class InterfaceStandardTrainer:
         self.history['stage3_freeze_cnn'] = model.fit(
             self.train_dataset,
             validation_data=self.val_dataset,
-            epochs=Config.EPOCHS_STAGE3 // 3,
+            epochs=Config.EPOCHS_STAGE3A,
             callbacks=[
                 keras.callbacks.EarlyStopping(
                     monitor="val_loss", patience=10, restore_best_weights=True, verbose=1
@@ -564,7 +566,7 @@ class InterfaceStandardTrainer:
         
         # === Phase 3B: 冻结LSTM, 微调CNN ===
         print("-"*70)
-        print("Phase 3B: Fine-tune ResNet CNN ← Frozen Attention LSTM")
+        print(f"Phase 3B: Fine-tune ResNet CNN ← Frozen Attention LSTM ({Config.EPOCHS_STAGE3B} epochs)")
         print("-"*70)
         
         # 冻结LSTM层
@@ -583,7 +585,7 @@ class InterfaceStandardTrainer:
         self.history['stage3_freeze_lstm'] = model.fit(
             self.train_dataset,
             validation_data=self.val_dataset,
-            epochs=Config.EPOCHS_STAGE3 // 3,
+            epochs=Config.EPOCHS_STAGE3B,
             callbacks=[
                 keras.callbacks.EarlyStopping(
                     monitor="val_loss", patience=10, restore_best_weights=True, verbose=1
@@ -600,7 +602,7 @@ class InterfaceStandardTrainer:
         
         # === Phase 3C: 全部解冻 ===
         print("-"*70)
-        print("Phase 3C: Full Fine-tuning (All Layers Unfrozen)")
+        print(f"Phase 3C: Full Fine-tuning (All Layers Unfrozen) ({Config.EPOCHS_STAGE3C} epochs)")
         print("-"*70)
         
         # 解冻所有层
@@ -618,7 +620,7 @@ class InterfaceStandardTrainer:
         self.history['stage3_full'] = model.fit(
             self.train_dataset,
             validation_data=self.val_dataset,
-            epochs=Config.EPOCHS_STAGE3 // 3,
+            epochs=Config.EPOCHS_STAGE3C,
             callbacks=[
                 keras.callbacks.EarlyStopping(
                     monitor="val_loss", patience=15, restore_best_weights=True, verbose=1
@@ -873,12 +875,32 @@ def main():
                完美匹配！
     """)
     
-    # 配置
+# 配置
     print("Configuration:")
-    print(f"  Stage 1:  {'SKIP' if Config.SKIP_STAGE1 else 'RUN'}")
-    print(f"  Stage 2A: {'SKIP' if Config.SKIP_STAGE2A else 'RUN'}")
-    print(f"  Stage 2B: {'SKIP' if Config.SKIP_STAGE2B else 'RUN'}")
-    print(f"  Stage 3:  {'SKIP' if Config.SKIP_STAGE3 else 'RUN'}")
+    print(f"  Stage 1:  {'SKIP' if Config.SKIP_STAGE1 else f'RUN ({Config.EPOCHS_STAGE1} epochs)'}")
+    print(f"  Stage 2A: {'SKIP' if Config.SKIP_STAGE2A else f'RUN ({Config.EPOCHS_STAGE2A} epochs)'}")
+    print(f"  Stage 2B: {'SKIP' if Config.SKIP_STAGE2B else f'RUN ({Config.EPOCHS_STAGE2B} epochs)'}")
+    if Config.SKIP_STAGE3:
+        print(f"  Stage 3:  SKIP")
+    else:
+        total_stage3 = Config.EPOCHS_STAGE3A + Config.EPOCHS_STAGE3B + Config.EPOCHS_STAGE3C
+        print(f"  Stage 3:  RUN (Total: {total_stage3} epochs)")
+        print(f"    - Phase 3A: {Config.EPOCHS_STAGE3A} epochs")
+        print(f"    - Phase 3B: {Config.EPOCHS_STAGE3B} epochs")
+        print(f"    - Phase 3C: {Config.EPOCHS_STAGE3C} epochs")
+    
+    # 总计
+    total_epochs = 0
+    if not Config.SKIP_STAGE1:
+        total_epochs += Config.EPOCHS_STAGE1
+    if not Config.SKIP_STAGE2A:
+        total_epochs += Config.EPOCHS_STAGE2A
+    if not Config.SKIP_STAGE2B:
+        total_epochs += Config.EPOCHS_STAGE2B
+    if not Config.SKIP_STAGE3:
+        total_epochs += Config.EPOCHS_STAGE3A + Config.EPOCHS_STAGE3B + Config.EPOCHS_STAGE3C
+    
+    print(f"\n  Total training epochs: {total_epochs}")
     print()
     
     # 设置GPU
