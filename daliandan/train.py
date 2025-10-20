@@ -43,11 +43,11 @@ class Config:
     EPOCHS_STAGE3C = 40   # 阶段3C: 全部解冻, 最终微调
     
     # 模型路径
-    STAGE1_MODEL_PATH = "models/stage1_plain_cnn_lstm.keras"
-    STAGE2A_MODEL_PATH = "models/stage2a_attention_lstm.keras"
-    STAGE2B_MODEL_PATH = "models/stage2b_resnet_cnn.keras"
-    STAGE3_MODEL_PATH = "models/stage3_merged.keras"
-    FINAL_MODEL_PATH = "models/luoguCaptcha_final.keras"
+    STAGE1_MODEL_PATH = "models/bigdan_stage1_plain_cnn_lstm.keras"
+    STAGE2A_MODEL_PATH = "models/bigdan_stage2a_attention_lstm.keras"
+    STAGE2B_MODEL_PATH = "models/bigdan_stage2b_resnet_cnn.keras"
+    STAGE3_MODEL_PATH = "models/bigdan_stage3_merged.keras"
+    FINAL_MODEL_PATH = "models/bigdan_luoguCaptcha_final.keras"
     
     # 控制开关
     SKIP_STAGE1 = False   # 阶段1: 建立接口标准
