@@ -187,40 +187,50 @@ baseline_model = keras.models.load_model("models/stage1_cnn_bilstm.keras")
 # 构建新模型，复用CNN权重
 inputs_stage2 = keras.Input(shape=(IMG_HEIGHT, IMG_WIDTH, 1), name="input")
 
-# === 复制CNN部分（前6层）===
+# === 方法：使用函数式API逐层构建并复制权重 ===
 x = inputs_stage2
-cnn_layers = []
-for i, layer in enumerate(baseline_model.layers[:6]):  # Conv1, BN1, Pool1, Conv2, BN2, Pool2
-    # 创建新层并复制权重
-    if isinstance(layer, layers.Conv2D):
-        new_layer = layers.Conv2D(
-            layer.filters,
-            layer.kernel_size,
-            padding=layer.padding,
-            activation=layer.activation,
-            name=layer.name
-        )
-    elif isinstance(layer, layers.BatchNormalization):
-        new_layer = layers.BatchNormalization(name=layer.name)
-    elif isinstance(layer, layers.MaxPooling2D):
-        new_layer = layers.MaxPooling2D(layer.pool_size, name=layer.name)
-    else:
-        new_layer = layer
-    
-    x = new_layer(x)
-    cnn_layers.append(new_layer)
-    new_layer.trainable = False  # 冻结CNN
 
-# 复制CNN权重
-for i, layer in enumerate(cnn_layers):
-    if hasattr(baseline_model.layers[i], 'get_weights'):
-        weights = baseline_model.layers[i].get_weights()
-        if weights:
-            layer.set_weights(weights)
+# 手动构建CNN部分（与stage1完全相同的结构）
+# Layer 0: Conv2D
+x = layers.Conv2D(64, 3, padding="same", activation="relu", name="cnn_conv1_frozen")(x)
+# Layer 1: BatchNormalization
+x = layers.BatchNormalization(name="cnn_bn1_frozen")(x)
+# Layer 2: MaxPooling2D
+x = layers.MaxPooling2D((2, 2), name="cnn_pool1_frozen")(x)
+# Layer 3: Conv2D
+x = layers.Conv2D(128, 3, padding="same", activation="relu", name="cnn_conv2_frozen")(x)
+# Layer 4: BatchNormalization
+x = layers.BatchNormalization(name="cnn_bn2_frozen")(x)
+# Layer 5: MaxPooling2D
+x = layers.MaxPooling2D((2, 2), name="cnn_pool2_frozen")(x)
 
-print("✓ CNN weights copied and frozen")
+# 创建一个临时模型用于设置权重
+temp_model = keras.Model(inputs=inputs_stage2, outputs=x, name="temp_cnn")
 
-# === 新的序列处理部分 ===
+# 复制CNN权重（前6层）
+print("Copying CNN weights from Stage 1...")
+layer_mapping = [
+    (0, 1),  # input layer跳过，从第1层开始
+    (1, 2),  # conv1
+    (2, 3),  # bn1
+    (3, 4),  # pool1
+    (4, 5),  # conv2
+    (5, 6),  # bn2
+    (6, 7),  # pool2
+]
+
+for stage1_idx, stage2_idx in layer_mapping:
+    try:
+        weights = baseline_model.layers[stage1_idx].get_weights()
+        if weights:  # 只有有权重的层才复制（pool层没有权重）
+            temp_model.layers[stage2_idx].set_weights(weights)
+            print(f"  ✓ Copied {baseline_model.layers[stage1_idx].name} → {temp_model.layers[stage2_idx].name}")
+    except Exception as e:
+        print(f"  ⚠ Skipped layer {stage1_idx}: {e}")
+
+print("✓ CNN weights copied\n")
+
+# 继续构建新的序列处理部分
 cnn_shape = x.shape
 x = layers.Reshape((cnn_shape[1] * cnn_shape[2], cnn_shape[3]), name="reshape_to_seq")(x)
 
@@ -245,14 +255,25 @@ outputs_stage2 = layers.Reshape((CHARS_PER_LABEL, CHAR_SIZE), name="reshape_outp
 
 model_stage2 = keras.Model(inputs=inputs_stage2, outputs=outputs_stage2, name="Stage2_CNN_Attention_BiLSTM")
 
+# 冻结CNN部分（前7层：input + 6个CNN层）
+print("Freezing CNN layers...")
+for i in range(1, 8):  # 跳过input层（第0层）
+    model_stage2.layers[i].trainable = False
+    print(f"  Frozen: {model_stage2.layers[i].name}")
+
 model_stage2.compile(
-    optimizer=keras.optimizers.Adam(learning_rate=0.002),  # 稍大的学习率
+    optimizer=keras.optimizers.Adam(learning_rate=0.002),
     loss="sparse_categorical_crossentropy",
     metrics=["accuracy"],
 )
 
 print("\nStage 2 Model Summary:")
 model_stage2.summary()
+print("\nTrainable parameters:")
+trainable_count = sum([tf.size(w).numpy() for w in model_stage2.trainable_weights])
+non_trainable_count = sum([tf.size(w).numpy() for w in model_stage2.non_trainable_weights])
+print(f"  Trainable: {trainable_count:,}")
+print(f"  Non-trainable (frozen CNN): {non_trainable_count:,}")
 
 # 训练阶段2
 print(f"\nTraining Stage 2 for {EPOCHS_STAGE2} epochs...")
