@@ -4,6 +4,10 @@
 
 Recognize [Luogu Captcha](https://www.luogu.com.cn/lg4/captcha) with AI model
 
+## License
+
+All novel training methods and architectures proposed herein are licensed under CC BY 4.0.
+
 ## Usage
 
 1. Make sure you have [TamperMonkey](https://www.tampermonkey.net/) or other UserScript managers installed in your browser.
