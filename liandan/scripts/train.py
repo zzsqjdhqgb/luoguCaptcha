@@ -1,4 +1,4 @@
-# Copyright (C) 2025 Langning Chen
+# Copyright (C) 2025 zzsqjdhqgb
 #
 # This file is part of luoguCaptcha.
 #
