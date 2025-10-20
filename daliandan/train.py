@@ -23,6 +23,8 @@ import tensorflow as tf
 from tensorflow import keras
 from tensorflow.keras import layers
 
+tf.get_logger().setLevel('ERROR')
+
 # ========== 配置 ==========
 class Config:
     # 数据参数
