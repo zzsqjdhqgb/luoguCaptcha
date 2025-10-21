@@ -50,8 +50,8 @@ class Config:
     FINAL_MODEL_PATH = "models/bigdan_luoguCaptcha_final.keras"
     
     # 控制开关
-    SKIP_STAGE1 = False   # 阶段1: 建立接口标准
-    SKIP_STAGE2A = False  # 阶段2A: 训练Attention LSTM
+    SKIP_STAGE1 = True   # 阶段1: 建立接口标准
+    SKIP_STAGE2A = True  # 阶段2A: 训练Attention LSTM
     SKIP_STAGE2B = False  # 阶段2B: 训练残差CNN
     SKIP_STAGE3 = False   # 阶段3: 合并 + 渐进微调
 
