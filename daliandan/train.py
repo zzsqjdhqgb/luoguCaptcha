@@ -36,23 +36,23 @@ class Config:
     
     # 训练参数
     EPOCHS_STAGE1 = 30   # 阶段1: 普通CNN + 普通LSTM
-    EPOCHS_STAGE2A = 30   # 阶段2A: 普通CNN(冻结) + Attention LSTM
-    EPOCHS_STAGE2B = 30   # 阶段2B: 残差CNN + 普通LSTM(冻结)
-    EPOCHS_STAGE3A = 50   # 阶段3A: 冻结ResNet CNN, 微调Attention LSTM
-    EPOCHS_STAGE3B = 50   # 阶段3B: 冻结Attention LSTM, 微调ResNet CNN
+    EPOCHS_STAGE2A = 2   # 阶段2A: 普通CNN(冻结) + Attention LSTM
+    EPOCHS_STAGE2B = 2   # 阶段2B: 残差CNN + 普通LSTM(冻结)
+    EPOCHS_STAGE3A = 0   # 阶段3A: 冻结ResNet CNN, 微调Attention LSTM
+    EPOCHS_STAGE3B = 0   # 阶段3B: 冻结Attention LSTM, 微调ResNet CNN
     EPOCHS_STAGE3C = 100   # 阶段3C: 全部解冻, 最终微调
     
     # 模型路径
-    STAGE1_MODEL_PATH = "models/bigdan_stage1_plain_cnn_lstm.keras"
-    STAGE2A_MODEL_PATH = "models/bigdan_stage2a_attention_lstm.keras"
-    STAGE2B_MODEL_PATH = "models/bigdan_stage2b_resnet_cnn.keras"
-    STAGE3_MODEL_PATH = "models/bigdan_stage3_merged.keras"
-    FINAL_MODEL_PATH = "models/bigdan_luoguCaptcha_final.keras"
+    STAGE1_MODEL_PATH =  "models/bigdan_stage1_plain_cnn_lstm.keras"
+    STAGE2A_MODEL_PATH = "models/test_bigdan_stage2a_attention_lstm.keras"
+    STAGE2B_MODEL_PATH = "models/test_bigdan_stage2b_resnet_cnn.keras"
+    STAGE3_MODEL_PATH =  "models/test_bigdan_stage3_merged.keras"
+    FINAL_MODEL_PATH =   "models/test_bigdan_luoguCaptcha_final.keras"
     
     # 控制开关
     SKIP_STAGE1 = True   # 阶段1: 建立接口标准
     SKIP_STAGE2A = True  # 阶段2A: 训练Attention LSTM
-    SKIP_STAGE2B = False  # 阶段2B: 训练残差CNN
+    SKIP_STAGE2B = True  # 阶段2B: 训练残差CNN
     SKIP_STAGE3 = False   # 阶段3: 合并 + 渐进微调
 
 
@@ -394,19 +394,19 @@ class InterfaceStandardTrainer:
         print(f"  This accuracy defines the 'interface contract'\n")
         
         return model
-    
+
     def run_stage2a(self, stage1_model):
         """
         阶段2A: 冻结普通CNN, 训练Attention LSTM
         目标: Attention LSTM学会接受"标准CNN输出"
+
+        如果 EPOCHS_STAGE2A = 0，则只构建模型，不训练
         """
         print("\n" + "="*70)
         print("STAGE 2A: Frozen CNN → Attention LSTM (Training Advanced LSTM)")
         print("="*70)
-        print("\n📌 Purpose: Force Attention LSTM to adapt to standard CNN output")
-        print("   - Plain CNN (Frozen): Provides consistent feature format")
-        print("   - Attention LSTM (Training): Must learn from this format\n")
-        
+
+        # 检查是否加载已有模型
         if Config.SKIP_STAGE2A and os.path.exists(Config.STAGE2A_MODEL_PATH):
             print(f"⊙ Skipping Stage 2A (loading from {Config.STAGE2A_MODEL_PATH})")
             model = keras.models.load_model(Config.STAGE2A_MODEL_PATH)
@@ -414,20 +414,45 @@ class InterfaceStandardTrainer:
             print(f"  Loaded model - Val Acc: {val_acc:.4f}\n")
             self.history['stage2a'] = self._create_mock_history(val_acc, val_loss)
             return model
-        
+
+        # 构建模型
+        print("\n📌 Purpose: Force Attention LSTM to adapt to standard CNN output")
+        print("   - Plain CNN (Frozen): Provides consistent feature format")
+        print("   - Attention LSTM (Training): Must learn from this format\n")
+
         model = build_stage2a_model(stage1_model)
         model.compile(
             optimizer=keras.optimizers.Adam(learning_rate=0.001),
             loss="sparse_categorical_crossentropy",
             metrics=["accuracy"],
         )
-        
+
         # 验证冻结状态
         frozen_count = sum([1 for layer in model.layers if not layer.trainable])
         print(f"Frozen layers: {frozen_count}")
         print("Model Summary:")
         model.summary()
-        
+
+        # === 关键：检查是否训练 ===
+        if Config.EPOCHS_STAGE2A == 0:
+            print("\n" + "="*70)
+            print("⊙ EPOCHS_STAGE2A = 0, skipping training")
+            print("="*70)
+            print("  Model built with initial random weights")
+            print("  Attention LSTM remains randomly initialized\n")
+
+            # 创建假历史记录
+            self.history['stage2a'] = self._create_mock_history(0.0, 999.0)
+
+            # 保存未训练的模型
+            model.save(Config.STAGE2A_MODEL_PATH)
+            print(f"✓ Saved untrained model to {Config.STAGE2A_MODEL_PATH}\n")
+
+            return model
+
+        # === 正常训练流程 ===
+        print(f"\n🚀 Training Attention LSTM for {Config.EPOCHS_STAGE2A} epochs...\n")
+
         self.history['stage2a'] = model.fit(
             self.train_dataset,
             validation_data=self.val_dataset,
@@ -448,11 +473,11 @@ class InterfaceStandardTrainer:
                 ),
             ],
         )
-        
+
         best_acc = max(self.history['stage2a'].history['val_accuracy'])
         baseline_acc = max(self.history['stage1'].history['val_accuracy'])
         improvement = best_acc - baseline_acc
-        
+
         print(f"\n✓ Stage 2A Complete!")
         print(f"  Attention LSTM Accuracy: {best_acc:.4f}")
         print(f"  Improvement over baseline: {improvement:+.4f}")
@@ -461,21 +486,21 @@ class InterfaceStandardTrainer:
         else:
             print(f"  → Attention LSTM maintains performance")
         print(f"  Attention LSTM now 'speaks' the CNN interface language\n")
-        
+
         return model
-    
+
     def run_stage2b(self, stage1_model):
         """
         阶段2B: 训练残差CNN, 冻结普通LSTM
         目标: 残差CNN学会输出"标准LSTM输入"
+        
+        如果 EPOCHS_STAGE2B = 0，则只构建模型，不训练
         """
         print("\n" + "="*70)
         print("STAGE 2B: ResNet CNN → Frozen LSTM (Training Advanced CNN)")
         print("="*70)
-        print("\n📌 Purpose: Force ResNet CNN to produce standard LSTM-compatible features")
-        print("   - ResNet CNN (Training): Must output in standard format")
-        print("   - Plain LSTM (Frozen): Enforces the output standard\n")
         
+        # 检查是否加载已有模型
         if Config.SKIP_STAGE2B and os.path.exists(Config.STAGE2B_MODEL_PATH):
             print(f"⊙ Skipping Stage 2B (loading from {Config.STAGE2B_MODEL_PATH})")
             model = keras.models.load_model(Config.STAGE2B_MODEL_PATH)
@@ -483,6 +508,11 @@ class InterfaceStandardTrainer:
             print(f"  Loaded model - Val Acc: {val_acc:.4f}\n")
             self.history['stage2b'] = self._create_mock_history(val_acc, val_loss)
             return model
+        
+        # 构建模型
+        print("\n📌 Purpose: Force ResNet CNN to produce standard LSTM-compatible features")
+        print("   - ResNet CNN (Training): Must output in standard format")
+        print("   - Plain LSTM (Frozen): Enforces the output standard\n")
         
         model = build_stage2b_model(stage1_model)
         model.compile(
@@ -496,6 +526,26 @@ class InterfaceStandardTrainer:
         print(f"Frozen layers: {frozen_count}")
         print("Model Summary:")
         model.summary()
+        
+        # === 关键：检查是否训练 ===
+        if Config.EPOCHS_STAGE2B == 0:
+            print("\n" + "="*70)
+            print("⊙ EPOCHS_STAGE2B = 0, skipping training")
+            print("="*70)
+            print("  Model built with initial random weights")
+            print("  ResNet CNN remains randomly initialized\n")
+            
+            # 创建假历史记录
+            self.history['stage2b'] = self._create_mock_history(0.0, 999.0)
+            
+            # 保存未训练的模型
+            model.save(Config.STAGE2B_MODEL_PATH)
+            print(f"✓ Saved untrained model to {Config.STAGE2B_MODEL_PATH}\n")
+            
+            return model
+        
+        # === 正常训练流程 ===
+        print(f"\n🚀 Training ResNet CNN for {Config.EPOCHS_STAGE2B} epochs...\n")
         
         self.history['stage2b'] = model.fit(
             self.train_dataset,
@@ -532,11 +582,13 @@ class InterfaceStandardTrainer:
         print(f"  ResNet CNN now outputs in 'LSTM-compatible' format\n")
         
         return model
-    
+
     def run_stage3(self, stage2a_model, stage2b_model):
         """
         阶段3: 合并 + 渐进解冻微调
         目标: ResNet CNN + Attention LSTM 互相适配
+        
+        如果 EPOCHS_STAGE3A/3B/3C = 0，则跳过对应阶段的训练
         """
         print("\n" + "="*70)
         print("STAGE 3: Merging ResNet CNN + Attention LSTM (Progressive Fine-tuning)")
@@ -558,121 +610,187 @@ class InterfaceStandardTrainer:
         print("Merging models...")
         model = build_stage3_merged_model(stage2a_model, stage2b_model)
         
-        # === Phase 3A: 冻结CNN, 微调LSTM ===
+        
+        # ===================================================================
+        # Phase 3A: 冻结CNN, 微调LSTM
+        # ===================================================================
         print("\n" + "-"*70)
-        print(f"Phase 3A: Frozen ResNet CNN → Fine-tune Attention LSTM ({Config.EPOCHS_STAGE3A} epochs)")
+        print(f"Phase 3A: Frozen ResNet CNN → Fine-tune Attention LSTM")
         print("-"*70)
         
-        # 冻结CNN层
-        for layer in model.layers:
-            if 'resnet' in layer.name or 'reshape' in layer.name:
-                layer.trainable = False
-            else:
+        if Config.EPOCHS_STAGE3A == 0:
+            print("\n⊙ EPOCHS_STAGE3A = 0, skipping Phase 3A")
+            print("  Model parameters remain unchanged\n")
+            
+            # 创建假历史
+            self.history['stage3_freeze_cnn'] = self._create_mock_history(0.0, 999.0)
+            
+        else:
+            # 冻结CNN层
+            for layer in model.layers:
+                if 'resnet' in layer.name or 'reshape' in layer.name:
+                    layer.trainable = False
+                else:
+                    layer.trainable = True
+            
+            model.compile(
+                optimizer=keras.optimizers.Adam(learning_rate=0.0005),
+                loss="sparse_categorical_crossentropy",
+                metrics=["accuracy"],
+            )
+            
+            print(f"\n🚀 Training Phase 3A for {Config.EPOCHS_STAGE3A} epochs...\n")
+            
+            self.history['stage3_freeze_cnn'] = model.fit(
+                self.train_dataset,
+                validation_data=self.val_dataset,
+                epochs=Config.EPOCHS_STAGE3A,
+                callbacks=[
+                    keras.callbacks.EarlyStopping(
+                        monitor="val_loss", patience=10, restore_best_weights=True, verbose=1
+                    ),
+                    keras.callbacks.ReduceLROnPlateau(
+                        monitor="val_loss", factor=0.5, patience=3, min_lr=1e-7, verbose=1
+                    ),
+                ],
+            )
+            
+            phase3a_acc = max(self.history['stage3_freeze_cnn'].history['val_accuracy'])
+            print(f"\n✓ Phase 3A Complete! Val Acc: {phase3a_acc:.4f}")
+            print("  Attention LSTM adapted to ResNet CNN features\n")
+        
+        
+        # ===================================================================
+        # Phase 3B: 冻结LSTM, 微调CNN
+        # ===================================================================
+        print("-"*70)
+        print(f"Phase 3B: Fine-tune ResNet CNN ← Frozen Attention LSTM")
+        print("-"*70)
+        
+        if Config.EPOCHS_STAGE3B == 0:
+            print("\n⊙ EPOCHS_STAGE3B = 0, skipping Phase 3B")
+            print("  Model parameters remain unchanged\n")
+            
+            # 创建假历史
+            self.history['stage3_freeze_lstm'] = self._create_mock_history(0.0, 999.0)
+            
+        else:
+            # 冻结LSTM层
+            for layer in model.layers:
+                if 'resnet' in layer.name:
+                    layer.trainable = True
+                else:
+                    layer.trainable = False
+            
+            model.compile(
+                optimizer=keras.optimizers.Adam(learning_rate=0.0005),
+                loss="sparse_categorical_crossentropy",
+                metrics=["accuracy"],
+            )
+            
+            print(f"\n🚀 Training Phase 3B for {Config.EPOCHS_STAGE3B} epochs...\n")
+            
+            self.history['stage3_freeze_lstm'] = model.fit(
+                self.train_dataset,
+                validation_data=self.val_dataset,
+                epochs=Config.EPOCHS_STAGE3B,
+                callbacks=[
+                    keras.callbacks.EarlyStopping(
+                        monitor="val_loss", patience=10, restore_best_weights=True, verbose=1
+                    ),
+                    keras.callbacks.ReduceLROnPlateau(
+                        monitor="val_loss", factor=0.5, patience=3, min_lr=1e-7, verbose=1
+                    ),
+                ],
+            )
+            
+            phase3b_acc = max(self.history['stage3_freeze_lstm'].history['val_accuracy'])
+            print(f"\n✓ Phase 3B Complete! Val Acc: {phase3b_acc:.4f}")
+            print("  ResNet CNN learned to produce richer features for Attention LSTM\n")
+        
+        
+        # ===================================================================
+        # Phase 3C: 全部解冻
+        # ===================================================================
+        print("-"*70)
+        print(f"Phase 3C: Full Fine-tuning (All Layers Unfrozen)")
+        print("-"*70)
+        
+        if Config.EPOCHS_STAGE3C == 0:
+            print("\n⊙ EPOCHS_STAGE3C = 0, skipping Phase 3C")
+            print("  Model parameters remain unchanged\n")
+            
+            # 创建假历史
+            self.history['stage3_full'] = self._create_mock_history(0.0, 999.0)
+            
+            # 即使不训练，也保存模型
+            model.save(Config.FINAL_MODEL_PATH)
+            print(f"✓ Model saved to {Config.FINAL_MODEL_PATH} (without Phase 3C training)\n")
+            
+        else:
+            # 解冻所有层
+            for layer in model.layers:
                 layer.trainable = True
+            
+            model.compile(
+                optimizer=keras.optimizers.Adam(learning_rate=0.0001),  # 更小的学习率
+                loss="sparse_categorical_crossentropy",
+                metrics=["accuracy"],
+            )
+            
+            print(f"\n🚀 Training Phase 3C for {Config.EPOCHS_STAGE3C} epochs with all layers unfrozen (lr=0.0001)...\n")
+            
+            self.history['stage3_full'] = model.fit(
+                self.train_dataset,
+                validation_data=self.val_dataset,
+                epochs=Config.EPOCHS_STAGE3C,
+                callbacks=[
+                    keras.callbacks.EarlyStopping(
+                        monitor="val_loss", patience=15, restore_best_weights=True, verbose=1
+                    ),
+                    keras.callbacks.ReduceLROnPlateau(
+                        monitor="val_loss", factor=0.5, patience=5, min_lr=1e-8, verbose=1
+                    ),
+                    keras.callbacks.ModelCheckpoint(
+                        Config.FINAL_MODEL_PATH, monitor="val_accuracy", save_best_only=True, verbose=1
+                    ),
+                ],
+            )
+            
+            final_acc = max(self.history['stage3_full'].history['val_accuracy'])
+            print(f"\n✓ Phase 3C Complete! Final Val Acc: {final_acc:.4f}")
+            print(f"  ResNet CNN and Attention LSTM reached optimal alignment\n")
+            
+            model.save(Config.FINAL_MODEL_PATH)
+            print(f"✓ Final model saved to {Config.FINAL_MODEL_PATH}\n")
         
-        model.compile(
-            optimizer=keras.optimizers.Adam(learning_rate=0.0005),
-            loss="sparse_categorical_crossentropy",
-            metrics=["accuracy"],
-        )
         
-        self.history['stage3_freeze_cnn'] = model.fit(
-            self.train_dataset,
-            validation_data=self.val_dataset,
-            epochs=Config.EPOCHS_STAGE3A,
-            callbacks=[
-                keras.callbacks.EarlyStopping(
-                    monitor="val_loss", patience=10, restore_best_weights=True, verbose=1
-                ),
-                keras.callbacks.ReduceLROnPlateau(
-                    monitor="val_loss", factor=0.5, patience=3, min_lr=1e-7, verbose=1
-                ),
-            ],
-        )
+        # === 打印 Stage 3 摘要 ===
+        print("\n" + "="*70)
+        print("STAGE 3 SUMMARY")
+        print("="*70)
         
-        phase3a_acc = max(self.history['stage3_freeze_cnn'].history['val_accuracy'])
-        print(f"\n✓ Phase 3A Complete! Val Acc: {phase3a_acc:.4f}")
-        print("  Attention LSTM adapted to ResNet CNN features\n")
+        phase3a_status = f"Trained ({Config.EPOCHS_STAGE3A} epochs)" if Config.EPOCHS_STAGE3A > 0 else "Skipped"
+        phase3b_status = f"Trained ({Config.EPOCHS_STAGE3B} epochs)" if Config.EPOCHS_STAGE3B > 0 else "Skipped"
+        phase3c_status = f"Trained ({Config.EPOCHS_STAGE3C} epochs)" if Config.EPOCHS_STAGE3C > 0 else "Skipped"
         
-        # === Phase 3B: 冻结LSTM, 微调CNN ===
-        print("-"*70)
-        print(f"Phase 3B: Fine-tune ResNet CNN ← Frozen Attention LSTM ({Config.EPOCHS_STAGE3B} epochs)")
-        print("-"*70)
+        print(f"  Phase 3A (Adapt Attention LSTM):  {phase3a_status}")
+        print(f"  Phase 3B (Adapt ResNet CNN):      {phase3b_status}")
+        print(f"  Phase 3C (Full Fine-tuning):      {phase3c_status}")
         
-        # 冻结LSTM层
-        for layer in model.layers:
-            if 'resnet' in layer.name:
-                layer.trainable = True
-            else:
-                layer.trainable = False
+        if Config.EPOCHS_STAGE3A == 0 and Config.EPOCHS_STAGE3B == 0 and Config.EPOCHS_STAGE3C == 0:
+            print(f"\n  ⚠ All Phase 3 stages skipped")
+            print(f"  → Model is just the merged Stage 2 components (no alignment)")
+        elif Config.EPOCHS_STAGE3C == 0:
+            print(f"\n  ℹ Phase 3C skipped")
+            print(f"  → Model may not be fully aligned (no end-to-end fine-tuning)")
+        else:
+            print(f"\n  ✓ Complete staged training finished")
         
-        model.compile(
-            optimizer=keras.optimizers.Adam(learning_rate=0.0005),
-            loss="sparse_categorical_crossentropy",
-            metrics=["accuracy"],
-        )
-        
-        self.history['stage3_freeze_lstm'] = model.fit(
-            self.train_dataset,
-            validation_data=self.val_dataset,
-            epochs=Config.EPOCHS_STAGE3B,
-            callbacks=[
-                keras.callbacks.EarlyStopping(
-                    monitor="val_loss", patience=10, restore_best_weights=True, verbose=1
-                ),
-                keras.callbacks.ReduceLROnPlateau(
-                    monitor="val_loss", factor=0.5, patience=3, min_lr=1e-7, verbose=1
-                ),
-            ],
-        )
-        
-        phase3b_acc = max(self.history['stage3_freeze_lstm'].history['val_accuracy'])
-        print(f"\n✓ Phase 3B Complete! Val Acc: {phase3b_acc:.4f}")
-        print("  ResNet CNN learned to produce richer features for Attention LSTM\n")
-        
-        # === Phase 3C: 全部解冻 ===
-        print("-"*70)
-        print(f"Phase 3C: Full Fine-tuning (All Layers Unfrozen) ({Config.EPOCHS_STAGE3C} epochs)")
-        print("-"*70)
-        
-        # 解冻所有层
-        for layer in model.layers:
-            layer.trainable = True
-        
-        model.compile(
-            optimizer=keras.optimizers.Adam(learning_rate=0.0001),  # 更小的学习率
-            loss="sparse_categorical_crossentropy",
-            metrics=["accuracy"],
-        )
-        
-        print(f"\nTraining with all layers unfrozen (lr=0.0001)...")
-        
-        self.history['stage3_full'] = model.fit(
-            self.train_dataset,
-            validation_data=self.val_dataset,
-            epochs=Config.EPOCHS_STAGE3C,
-            callbacks=[
-                keras.callbacks.EarlyStopping(
-                    monitor="val_loss", patience=15, restore_best_weights=True, verbose=1
-                ),
-                keras.callbacks.ReduceLROnPlateau(
-                    monitor="val_loss", factor=0.5, patience=5, min_lr=1e-8, verbose=1
-                ),
-                keras.callbacks.ModelCheckpoint(
-                    Config.FINAL_MODEL_PATH, monitor="val_accuracy", save_best_only=True, verbose=1
-                ),
-            ],
-        )
-        
-        final_acc = max(self.history['stage3_full'].history['val_accuracy'])
-        print(f"\n✓ Phase 3C Complete! Final Val Acc: {final_acc:.4f}")
-        print(f"  ResNet CNN and Attention LSTM reached optimal alignment\n")
-        
-        model.save(Config.FINAL_MODEL_PATH)
-        print(f"✓ Final model saved to {Config.FINAL_MODEL_PATH}\n")
+        print("="*70 + "\n")
         
         return model
-    
+
     def _create_mock_history(self, val_acc, val_loss):
         """创建模拟的训练历史"""
         return type('obj', (object,), {
