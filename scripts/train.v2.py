@@ -15,34 +15,57 @@
 # You should have received a copy of the GNU General Public License
 # along with luoguCaptcha.  If not, see <https://www.gnu.org/licenses/>.
 
+"""
+Vision Transformer 验证码识别训练脚本。
+Keras 3 + PyTorch 后端，数据从 NumPy .npz 加载。
+
+Usage:
+  python train.py [--data-dir DIR] [--epochs N] [--batch-size N]
+"""
+
 import os
-import glob
+import math
+import argparse
+
+# ── 设置后端（必须在 import keras 之前） ──────────────────────────
+os.environ["KERAS_BACKEND"] = "torch"
+
 import numpy as np
-import tensorflow as tf
-from tensorflow import keras
-from tensorflow.keras import layers
-from tqdm import tqdm
+import torch
+from torch.utils.data import Dataset, DataLoader
 
-# 固定随机种子
+import keras
+from keras import layers, ops
+
+# ── 固定随机种子 ──────────────────────────────────────────────────
 RANDOM_SEED = 484858
-np.random.seed(RANDOM_SEED)
-tf.random.set_seed(RANDOM_SEED)
-os.environ['PYTHONHASHSEED'] = str(RANDOM_SEED)
-os.environ['TF_DETERMINISTIC_OPS'] = '1'
-os.environ['TF_CUDNN_DETERMINISTIC'] = '1'
-print(f"Random seed set to {RANDOM_SEED}")
 
-# 自动选择设备
-gpus = tf.config.list_physical_devices("GPU")
-if gpus:
-    try:
-        for gpu in gpus:
-            tf.config.experimental.set_memory_growth(gpu, True)
-        print(f"Using GPU: {gpus}")
-    except Exception as e:
-        print(f"GPU setup error: {e}")
+
+def set_all_seeds(seed: int):
+    np.random.seed(seed)
+    torch.manual_seed(seed)
+    if torch.cuda.is_available():
+        torch.cuda.manual_seed_all(seed)
+        torch.backends.cudnn.deterministic = True
+        torch.backends.cudnn.benchmark = False
+    keras.utils.set_random_seed(seed)
+    os.environ["PYTHONHASHSEED"] = str(seed)
+
+
+set_all_seeds(RANDOM_SEED)
+
+# ── 设备信息 ──────────────────────────────────────────────────────
+if torch.cuda.is_available():
+    print(f"Using GPU: {torch.cuda.get_device_name(0)}")
+    print(f"  CUDA version: {torch.version.cuda}")
+    print(f"  Device count: {torch.cuda.device_count()}")
 else:
     print("Using CPU")
+
+print(f"Keras version : {keras.__version__}")
+print(f"Backend       : {keras.backend.backend()}")
+print(f"PyTorch       : {torch.__version__}")
+print(f"Random seed   : {RANDOM_SEED}")
 
 # 参数
 CHAR_SIZE = 256
@@ -56,7 +79,7 @@ DFF = 256  # 前馈网络中间层维度 (512 -> 256)
 DROPOUT_RATE = 0.1
 EPOCHS = 150
 BATCH_SIZE = 256
-TFRECORD_DIR = "data/luogu_captcha_tfrecord"
+DATA_DIR = "data/luogu_captcha_numpy"
 
 # 计算patch数量
 NUM_PATCHES_H = IMG_HEIGHT // PATCH_SIZE  # 35 / 5 = 7
@@ -64,47 +87,94 @@ NUM_PATCHES_W = IMG_WIDTH // PATCH_SIZE   # 90 / 5 = 18
 NUM_PATCHES = NUM_PATCHES_H * NUM_PATCHES_W  # 7 * 18 = 126
 
 
-def parse_tfrecord(example_proto):
-    """Parses a single TFRecord example into image and label."""
-    feature_description = {
-        "image": tf.io.FixedLenFeature([], tf.string),
-        "label": tf.io.FixedLenFeature([CHARS_PER_LABEL], tf.int64),
-    }
-    example = tf.io.parse_single_example(example_proto, feature_description)
-    image = tf.io.decode_png(example["image"], channels=1)
-    image = tf.image.convert_image_dtype(image, tf.float32)  # Normalize to [0, 1]
-    label = example["label"]  # Shape: (4,)
-    return image, label
+# ╔══════════════════════════════════════════════════════════════╗
+# ║  PyTorch Dataset + DataLoader                               ║
+# ╚══════════════════════════════════════════════════════════════╝
+class CaptchaDataset(Dataset):
+    """
+    从 .npz 文件加载验证码数据。
+    images: uint8 (N, H, W, 1) → float32 [0, 1]
+    labels: int32 (N, 4)
+    """
+
+    def __init__(self, npz_path: str):
+        data = np.load(npz_path)
+        # 转为 float32 并归一化
+        self.images = data["images"].astype(np.float32) / 255.0  # (N, H, W, 1)
+        self.labels = data["labels"].astype(np.int64)  # (N, 4)
+        print(
+            f"  Loaded {len(self.images)} samples from {npz_path} "
+            f"(images: {self.images.shape}, labels: {self.labels.shape})"
+        )
+
+    def __len__(self):
+        return len(self.images)
+
+    def __getitem__(self, idx):
+        # Keras 3 with torch backend 期望 channels-last (H, W, C) 的 numpy/tensor
+        # Keras 内部会自动处理转换
+        image = self.images[idx]  # (H, W, 1), float32
+        label = self.labels[idx]  # (4,), int64
+        return image, label
 
 
-def load_and_preprocess_data(tfrecord_dir):
-    """Loads and preprocesses data from TFRecord files."""
-    # Get train and test TFRecord files
-    train_files = sorted(glob.glob(os.path.join(tfrecord_dir, "train_part_*.tfrecord")))
-    test_files = sorted(glob.glob(os.path.join(tfrecord_dir, "test_part_*.tfrecord")))
+def numpy_collate(batch):
+    """
+    自定义 collate 函数：保持 NumPy 数组格式。
+    Keras 3 的 model.fit() 接受 NumPy 数组。
+    """
+    images, labels = zip(*batch)
+    images = np.stack(images, axis=0)
+    labels = np.stack(labels, axis=0)
+    return images, labels
 
-    if not train_files or not test_files:
-        raise ValueError(f"No TFRecord files found in {tfrecord_dir}")
 
-    print(f"Found {len(train_files)} train files and {len(test_files)} test files")
+def create_data_loaders(data_dir: str, batch_size: int):
+    """创建训练和验证的 DataLoader。"""
+    train_path = os.path.join(data_dir, "train.npz")
+    test_path = os.path.join(data_dir, "test.npz")
 
-    # Create tf.data datasets
-    train_ds = tf.data.TFRecordDataset(train_files, num_parallel_reads=tf.data.AUTOTUNE)
-    test_ds = tf.data.TFRecordDataset(test_files, num_parallel_reads=tf.data.AUTOTUNE)
+    if not os.path.exists(train_path):
+        raise FileNotFoundError(
+            f"Train data not found: {train_path}\n"
+            f"Run pull_data_numpy.py or tfrecord2numpy.py first."
+        )
+    if not os.path.exists(test_path):
+        raise FileNotFoundError(
+            f"Test data not found: {test_path}\n"
+            f"Run pull_data_numpy.py or tfrecord2numpy.py first."
+        )
 
-    # Parse TFRecords
-    train_ds = train_ds.map(parse_tfrecord, num_parallel_calls=tf.data.AUTOTUNE)
-    test_ds = test_ds.map(parse_tfrecord, num_parallel_calls=tf.data.AUTOTUNE)
+    print("Loading data...")
+    train_dataset = CaptchaDataset(train_path)
+    test_dataset = CaptchaDataset(test_path)
 
-    # Shuffle and batch train dataset
-    train_ds = (
-        train_ds.shuffle(buffer_size=10000).batch(BATCH_SIZE).prefetch(tf.data.AUTOTUNE)
+    train_loader = DataLoader(
+        train_dataset,
+        batch_size=batch_size,
+        shuffle=True,
+        num_workers=4,
+        pin_memory=False,  # 不用 pin_memory，因为传 numpy 给 Keras
+        drop_last=False,
+        collate_fn=numpy_collate,
+        generator=torch.Generator().manual_seed(RANDOM_SEED),
     )
-    test_ds = test_ds.batch(BATCH_SIZE).prefetch(tf.data.AUTOTUNE)
+    test_loader = DataLoader(
+        test_dataset,
+        batch_size=batch_size,
+        shuffle=False,
+        num_workers=4,
+        pin_memory=False,
+        drop_last=False,
+        collate_fn=numpy_collate,
+    )
 
-    return train_ds, test_ds
+    return train_loader, test_loader
 
 
+# ╔══════════════════════════════════════════════════════════════╗
+# ║  Keras 3 自定义层（后端无关，使用 keras.ops）               ║
+# ╚══════════════════════════════════════════════════════════════╝
 class PatchEmbedding(layers.Layer):
     """将图像分割为patch并进行线性嵌入。"""
 
@@ -123,8 +193,8 @@ class PatchEmbedding(layers.Layer):
     def call(self, x):
         # x: (batch, H, W, 1)
         x = self.projection(x)  # (batch, num_patches_h, num_patches_w, d_model)
-        batch_size = tf.shape(x)[0]
-        x = tf.reshape(x, (batch_size, -1, self.d_model))  # (batch, num_patches, d_model)
+        batch_size = ops.shape(x)[0]
+        x = ops.reshape(x, (batch_size, -1, self.d_model))  # (batch, num_patches, d_model)
         return x
 
     def get_config(self):
@@ -154,12 +224,47 @@ class LearnedPositionalEncoding(layers.Layer):
 
     def get_config(self):
         config = super().get_config()
-        config.update({"num_positions": self.num_positions, "d_model": self.d_model})
+        config.update({
+            "num_positions": self.num_positions,
+            "d_model": self.d_model,
+        })
+        return config
+
+
+class CLSTokens(layers.Layer):
+    """可学习的 CLS tokens，拼接到序列前面。"""
+
+    def __init__(self, num_tokens, d_model, **kwargs):
+        super().__init__(**kwargs)
+        self.num_tokens = num_tokens
+        self.d_model = d_model
+
+    def build(self, input_shape):
+        self.cls_tokens = self.add_weight(
+            name="cls_tokens",
+            shape=(1, self.num_tokens, self.d_model),
+            initializer="truncated_normal",
+            trainable=True,
+        )
+
+    def call(self, x):
+        batch_size = ops.shape(x)[0]
+        cls_broadcast = ops.broadcast_to(
+            self.cls_tokens, (batch_size, self.num_tokens, self.d_model)
+        )
+        return ops.concatenate([cls_broadcast, x], axis=1)
+
+    def get_config(self):
+        config = super().get_config()
+        config.update({
+            "num_tokens": self.num_tokens,
+            "d_model": self.d_model,
+        })
         return config
 
 
 class TransformerEncoderBlock(layers.Layer):
-    """单个Transformer Encoder块：Multi-Head Attention + Feed Forward + LayerNorm + Dropout。"""
+    """Transformer Encoder 块（Pre-Norm 架构）。"""
 
     def __init__(self, d_model, num_heads, dff, dropout_rate=0.1, **kwargs):
         super().__init__(**kwargs)
@@ -169,7 +274,9 @@ class TransformerEncoderBlock(layers.Layer):
         self.dropout_rate = dropout_rate
 
         self.mha = layers.MultiHeadAttention(
-            num_heads=num_heads, key_dim=d_model // num_heads, dropout=dropout_rate
+            num_heads=num_heads,
+            key_dim=d_model // num_heads,
+            dropout=dropout_rate,
         )
         self.ffn = keras.Sequential([
             layers.Dense(dff, activation="gelu"),
@@ -182,7 +289,6 @@ class TransformerEncoderBlock(layers.Layer):
         self.dropout1 = layers.Dropout(dropout_rate)
 
     def call(self, x, training=None):
-        # Pre-norm架构
         x_norm = self.layernorm1(x)
         attn_output = self.mha(x_norm, x_norm, training=training)
         attn_output = self.dropout1(attn_output, training=training)
@@ -205,49 +311,75 @@ class TransformerEncoderBlock(layers.Layer):
         return config
 
 
-class CLSTokens(layers.Layer):
-    """可学习的CLS tokens，拼接到序列前面。"""
+class ExtractCLSTokens(layers.Layer):
+    """提取序列前 N 个 token（替代 Lambda 层）。"""
 
-    def __init__(self, num_tokens, d_model, **kwargs):
+    def __init__(self, num_tokens, **kwargs):
         super().__init__(**kwargs)
         self.num_tokens = num_tokens
-        self.d_model = d_model
-
-    def build(self, input_shape):
-        self.cls_tokens = self.add_weight(
-            name="cls_tokens",
-            shape=(1, self.num_tokens, self.d_model),
-            initializer="truncated_normal",
-            trainable=True,
-        )
 
     def call(self, x):
-        batch_size = keras.ops.shape(x)[0]
-        cls_broadcast = keras.ops.broadcast_to(
-            self.cls_tokens, (batch_size, self.num_tokens, self.d_model)
-        )
-        return keras.ops.concatenate([cls_broadcast, x], axis=1)
+        return x[:, : self.num_tokens, :]
 
     def get_config(self):
         config = super().get_config()
-        config.update({"num_tokens": self.num_tokens, "d_model": self.d_model})
+        config.update({"num_tokens": self.num_tokens})
         return config
 
 
+# ╔══════════════════════════════════════════════════════════════╗
+# ║  学习率调度                                                  ║
+# ╚══════════════════════════════════════════════════════════════╝
+class WarmupCosineDecay(keras.optimizers.schedules.LearningRateSchedule):
+    """Warmup + Cosine Decay。"""
+
+    def __init__(self, warmup_steps=2000, max_lr=6e-4, total_steps=50000):
+        super().__init__()
+        self.warmup_steps = warmup_steps
+        self.max_lr = max_lr
+        self.total_steps = total_steps
+
+    def __call__(self, step):
+        step = ops.cast(step, "float32")
+        warmup_steps = ops.cast(self.warmup_steps, "float32")
+        total_steps = ops.cast(self.total_steps, "float32")
+
+        warmup_lr = self.max_lr * (step / warmup_steps)
+
+        progress = (step - warmup_steps) / ops.maximum(
+            total_steps - warmup_steps, 1.0
+        )
+        decay_lr = self.max_lr * 0.5 * (1.0 + ops.cos(math.pi * progress))
+
+        return ops.where(step < warmup_steps, warmup_lr, decay_lr)
+
+    def get_config(self):
+        return {
+            "warmup_steps": self.warmup_steps,
+            "max_lr": self.max_lr,
+            "total_steps": self.total_steps,
+        }
+
+
+# ╔══════════════════════════════════════════════════════════════╗
+# ║  构建模型                                                    ║
+# ╚══════════════════════════════════════════════════════════════╝
 def build_vit_captcha_model():
-    """构建基于Vision Transformer (Encoder-Only) 的验证码识别模型。"""
+    """构建 Vision Transformer (Encoder-Only) 验证码识别模型。"""
 
     inputs = keras.Input(shape=(IMG_HEIGHT, IMG_WIDTH, 1), name="input")
 
     # Patch Embedding
-    x = PatchEmbedding(patch_size=PATCH_SIZE, d_model=D_MODEL, name="patch_embedding")(inputs)
-    # x: (batch, NUM_PATCHES, D_MODEL)
+    x = PatchEmbedding(
+        patch_size=PATCH_SIZE, d_model=D_MODEL, name="patch_embedding"
+    )(inputs)
 
-    # 添加4个可学习的 CLS tokens 并拼接到序列前面
-    x = CLSTokens(num_tokens=CHARS_PER_LABEL, d_model=D_MODEL, name="cls_tokens")(x)
-    # x: (batch, 4 + NUM_PATCHES, D_MODEL)
+    # CLS tokens
+    x = CLSTokens(
+        num_tokens=CHARS_PER_LABEL, d_model=D_MODEL, name="cls_tokens"
+    )(x)
 
-    # 位置编码 (覆盖 CLS tokens + patch tokens)
+    # 位置编码
     x = LearnedPositionalEncoding(
         num_positions=CHARS_PER_LABEL + NUM_PATCHES,
         d_model=D_MODEL,
@@ -255,7 +387,7 @@ def build_vit_captcha_model():
     )(x)
     x = layers.Dropout(DROPOUT_RATE)(x)
 
-    # Transformer Encoder 层
+    # Transformer Encoder
     for i in range(NUM_LAYERS):
         x = TransformerEncoderBlock(
             d_model=D_MODEL,
@@ -265,99 +397,120 @@ def build_vit_captcha_model():
             name=f"transformer_block_{i}",
         )(x)
 
-    # 最终LayerNorm
+    # Final LayerNorm
     x = layers.LayerNormalization(epsilon=1e-6, name="final_norm")(x)
 
-    # 取前4个token (CLS tokens) 作为4个字符的表示
-    x = layers.Lambda(lambda t: t[:, :CHARS_PER_LABEL, :], name="extract_cls")(x)
-    # x: (batch, 4, D_MODEL)
+    # 提取 CLS tokens
+    x = ExtractCLSTokens(num_tokens=CHARS_PER_LABEL, name="extract_cls")(x)
 
-    # 每个字符分类头
+    # 分类头
     x = layers.Dense(DFF, activation="gelu", name="cls_head_dense")(x)
     x = layers.Dropout(DROPOUT_RATE)(x)
-    outputs = layers.Dense(CHAR_SIZE, activation="softmax", name="cls_head_output")(x)
-    # outputs: (batch, 4, CHAR_SIZE)
+    outputs = layers.Dense(
+        CHAR_SIZE, activation="softmax", name="cls_head_output"
+    )(x)
 
     model = keras.Model(inputs=inputs, outputs=outputs, name="LuoguCaptcha_ViT")
     return model
 
-# Load data
-try:
-    train_dataset, val_dataset = load_and_preprocess_data(TFRECORD_DIR)
-    print("Data loaded successfully")
-except Exception as e:
-    print(f"Error loading TFRecord data: {e}")
-    exit(1)
 
-# ========== 构建并训练 Vision Transformer 模型 ==========
-print("\n" + "=" * 50)
-print("Building Vision Transformer (Encoder-Only) Model")
-print(f"  Patch size: {PATCH_SIZE}x{PATCH_SIZE}")
-print(f"  Num patches: {NUM_PATCHES} ({NUM_PATCHES_H}x{NUM_PATCHES_W})")
-print(f"  D_model: {D_MODEL}, Heads: {NUM_HEADS}, Layers: {NUM_LAYERS}, DFF: {DFF}")
-print("=" * 50 + "\n")
+# ╔══════════════════════════════════════════════════════════════╗
+# ║  主流程                                                      ║
+# ╚══════════════════════════════════════════════════════════════╝
+def main():
+    parser = argparse.ArgumentParser(
+        description="Train ViT captcha model (Keras 3 + PyTorch backend)"
+    )
+    parser.add_argument(
+        "--data-dir",
+        type=str,
+        default=DATA_DIR,
+        help=f"Directory containing train.npz and test.npz (default: {DATA_DIR})",
+    )
+    parser.add_argument(
+        "--epochs", type=int, default=EPOCHS, help=f"Training epochs (default: {EPOCHS})"
+    )
+    parser.add_argument(
+        "--batch-size",
+        type=int,
+        default=BATCH_SIZE,
+        help=f"Batch size (default: {BATCH_SIZE})",
+    )
+    args = parser.parse_args()
 
-model = build_vit_captcha_model()
-
-# Warmup + Cosine Decay 学习率调度
-class WarmupCosineDecay(keras.optimizers.schedules.LearningRateSchedule):
-    def __init__(self, d_model, warmup_steps=4000, max_lr=1e-3):
-        super().__init__()
-        self.d_model = d_model
-        self.warmup_steps = warmup_steps
-        self.max_lr = max_lr
-
-    def __call__(self, step):
-        step = tf.cast(step, tf.float32)
-        warmup_steps = tf.cast(self.warmup_steps, tf.float32)
-        # Linear warmup
-        warmup_lr = self.max_lr * (step / warmup_steps)
-        # Cosine decay after warmup
-        decay_lr = self.max_lr * 0.5 * (
-            1.0 + tf.cos(np.pi * (step - warmup_steps) / (50000.0 - warmup_steps))
+    # 加载数据
+    try:
+        train_loader, val_loader = create_data_loaders(
+            args.data_dir, args.batch_size
         )
-        return tf.where(step < warmup_steps, warmup_lr, decay_lr)
+        print("Data loaded successfully\n")
+    except Exception as e:
+        print(f"Error loading data: {e}")
+        exit(1)
 
-    def get_config(self):
-        return {
-            "d_model": self.d_model,
-            "warmup_steps": self.warmup_steps,
-            "max_lr": self.max_lr,
-        }
+    # 构建模型
+    print("=" * 60)
+    print("Building Vision Transformer (Encoder-Only) Model")
+    print(f"  Backend    : {keras.backend.backend()}")
+    print(f"  Patch size : {PATCH_SIZE}x{PATCH_SIZE}")
+    print(f"  Num patches: {NUM_PATCHES} ({NUM_PATCHES_H}x{NUM_PATCHES_W})")
+    print(f"  D_model    : {D_MODEL}")
+    print(f"  Heads      : {NUM_HEADS}")
+    print(f"  Layers     : {NUM_LAYERS}")
+    print(f"  DFF        : {DFF}")
+    print(f"  Batch size : {args.batch_size}")
+    print(f"  Epochs     : {args.epochs}")
+    print("=" * 60 + "\n")
 
+    model = build_vit_captcha_model()
 
-lr_schedule = WarmupCosineDecay(d_model=D_MODEL, warmup_steps=2000, max_lr=6e-4)
+    # 估算 total steps 用于学习率调度
+    steps_per_epoch = len(train_loader)
+    total_steps = steps_per_epoch * args.epochs
+    print(f"Steps per epoch: {steps_per_epoch}, Total steps: {total_steps}")
 
-model.compile(
-    optimizer=keras.optimizers.AdamW(
-        learning_rate=lr_schedule,
-        weight_decay=1e-4,
-        beta_1=0.9,
-        beta_2=0.999,
-        epsilon=1e-8,
-    ),
-    loss="sparse_categorical_crossentropy",
-    metrics=["accuracy"],
-)
-model.summary()
+    lr_schedule = WarmupCosineDecay(
+        warmup_steps=2000, max_lr=6e-4, total_steps=total_steps
+    )
 
-os.makedirs("models", exist_ok=True)
-
-history = model.fit(
-    train_dataset,
-    validation_data=val_dataset,
-    epochs=EPOCHS,
-    callbacks=[
-        keras.callbacks.EarlyStopping(
-            monitor="val_loss", patience=15, restore_best_weights=True
+    model.compile(
+        optimizer=keras.optimizers.AdamW(
+            learning_rate=lr_schedule,
+            weight_decay=1e-4,
+            beta_1=0.9,
+            beta_2=0.999,
+            epsilon=1e-8,
         ),
-    ],
-)
+        loss="sparse_categorical_crossentropy",
+        metrics=["accuracy"],
+    )
+    model.summary()
 
-# 保存模型
-final_model_path = "models/luoguCaptcha.ViT-EncoderOnly.keras"
-model.save(final_model_path)
-print(f"Model saved to {final_model_path}")
+    os.makedirs("models", exist_ok=True)
 
-# 提示上传
-print(f"Run `python scripts/huggingface.py upload_model {final_model_path}` to upload.")
+    # 训练
+    history = model.fit(
+        train_loader,
+        validation_data=val_loader,
+        epochs=args.epochs,
+        callbacks=[
+            keras.callbacks.EarlyStopping(
+                monitor="val_loss",
+                patience=15,
+                restore_best_weights=True,
+            ),
+        ],
+    )
+
+    # 保存模型
+    final_model_path = "models/luoguCaptcha.ViT-EncoderOnly.keras"
+    model.save(final_model_path)
+    print(f"\nModel saved to {final_model_path}")
+    print(
+        f"Run `python scripts/huggingface.py upload_model {final_model_path}` "
+        f"to upload."
+    )
+
+
+if __name__ == "__main__":
+    main()
