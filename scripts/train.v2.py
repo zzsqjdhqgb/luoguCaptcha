@@ -55,7 +55,7 @@ NUM_LAYERS = 4  # Transformer encoder层数 (6 -> 4)
 DFF = 256  # 前馈网络中间层维度 (512 -> 256)
 DROPOUT_RATE = 0.1
 EPOCHS = 150
-BATCH_SIZE = 128  # (256 -> 128)
+BATCH_SIZE = 256
 TFRECORD_DIR = "data/luogu_captcha_tfrecord"
 
 # 计算patch数量
@@ -350,9 +350,6 @@ history = model.fit(
     callbacks=[
         keras.callbacks.EarlyStopping(
             monitor="val_loss", patience=15, restore_best_weights=True
-        ),
-        keras.callbacks.ReduceLROnPlateau(
-            monitor="val_loss", factor=0.5, patience=7, min_lr=1e-6
         ),
     ],
 )

@@ -273,3 +273,16 @@ Epoch 19/150
 Epoch 20/150
 230/704 ━━━━━━━━━━━━━━━━━━━━ 38s 81ms/step - accuracy: 0.6225 - loss: 1.1076^CTraceback (most recent call last):
 ```
+
+
+---
+
+看起来256 batch_size 也能跑，先用256 batch size跑了
+
+---
+
+不行，震荡严重，有两个方向，一个是多一点epoch再看看（反正没有过拟合），另一个是增大模型参数量
+
+---
+
+目前有两个需要改的代码，一个是迁移到keras 3.x，另一个是增加loss plot输出
