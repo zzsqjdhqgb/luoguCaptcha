@@ -38,7 +38,7 @@ SAMPLES_PER_TFRECORD = 5000
 # ── 模型路径 ─────────────────────────────────────────────────────
 MODEL_DIR = "models"
 MODEL_PATH = os.path.join(MODEL_DIR, "luoguCaptcha.keras")
-VIT_MODEL_PATH = os.path.join(MODEL_DIR, "luoguCaptcha.ViT-EncoderOnly.keras")
+VIT_MODEL_PATH = os.path.join(MODEL_DIR, "luoguCaptcha.keras")
 
 # ── Hugging Face ─────────────────────────────────────────────────
 DATASET_REPO_ID = "langningchen/luogu-captcha-dataset"
