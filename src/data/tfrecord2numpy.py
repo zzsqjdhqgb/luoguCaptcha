@@ -1,4 +1,4 @@
-# Copyright (C) 2025 zzsqjdhqgb
+# Copyright (C) 2026 zzsqjdhqgb
 #
 # This file is part of luoguCaptcha.
 #
@@ -34,11 +34,7 @@ import numpy as np
 import tensorflow as tf
 from tqdm import tqdm
 
-# ── 常量 ──────────────────────────────────────────────────────────
-TFRECORD_DIR = "data/luogu_captcha_tfrecord"
-OUTPUT_DIR = "data/luogu_captcha_numpy"
-CHARS_PER_LABEL = 4
-IMG_HEIGHT, IMG_WIDTH = 35, 90
+from config import TFRECORD_DIR, NUMPY_DIR, CHARS_PER_LABEL, IMG_HEIGHT, IMG_WIDTH
 
 
 def parse_tfrecord(example_proto):
@@ -105,8 +101,8 @@ def main():
     parser.add_argument(
         "--output-dir",
         type=str,
-        default=OUTPUT_DIR,
-        help=f"Output directory for .npz files (default: {OUTPUT_DIR})",
+        default=NUMPY_DIR,
+        help=f"Output directory for .npz files (default: {NUMPY_DIR})",
     )
     args = parser.parse_args()
 

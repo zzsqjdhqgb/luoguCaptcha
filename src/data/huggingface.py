@@ -1,17 +1,17 @@
 # Copyright (C) 2025 Langning Chen
-# 
+#
 # This file is part of luoguCaptcha.
-# 
+#
 # luoguCaptcha is free software: you can redistribute it and/or modify
 # it under the terms of the GNU General Public License as published by
 # the Free Software Foundation, either version 3 of the License, or
 # (at your option) any later version.
-# 
+#
 # luoguCaptcha is distributed in the hope that it will be useful,
 # but WITHOUT ANY WARRANTY; without even the implied warranty of
 # MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
 # GNU General Public License for more details.
-# 
+#
 # You should have received a copy of the GNU General Public License
 # along with luoguCaptcha.  If not, see <https://www.gnu.org/licenses/>.
 
@@ -21,9 +21,7 @@ from huggingface_hub import HfApi, login, create_repo
 from datasets import load_from_disk
 from pathlib import Path
 
-# 请将 YOUR_REPO_ID 替换为你希望在 Hugging Face Hub 上使用的仓库 ID
-DATASET_REPO_ID = "langningchen/luogu-captcha-dataset"
-MODEL_REPO_ID = "langningchen/luogu-captcha-model"
+from config import DATASET_REPO_ID, MODEL_REPO_ID
 
 
 def upload_dataset(local_path):
@@ -77,7 +75,7 @@ def upload_model(local_model_path):
             path_or_fileobj=local_model_path,
             path_in_repo=os.path.basename(
                 local_model_path
-            ),  # 文件名: luoguCaptcha.keras
+            ),
             repo_id=MODEL_REPO_ID,
         )
         print(
@@ -92,7 +90,7 @@ def upload_model(local_model_path):
 def main():
     if len(sys.argv) < 3:
         print(
-            "Usage: python scripts/huggingface.py <upload_dataset|upload_model> <path>"
+            "Usage: python scripts/data/huggingface.py <upload_dataset|upload_model> <path>"
         )
         sys.exit(1)
 

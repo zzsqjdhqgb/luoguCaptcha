@@ -1,4 +1,4 @@
-# Copyright (C) 2025 zzsqjdhqgb
+# Copyright (C) 2026 zzsqjdhqgb
 #
 # This file is part of luoguCaptcha.
 #
@@ -31,23 +31,22 @@ import math
 import os
 from io import BytesIO
 
-
 import numpy as np
 import tensorflow as tf
 from datasets import load_dataset, DatasetDict
 from PIL import Image
 from tqdm import tqdm
 
-# ── 常量（与 generate.py 保持一致） ──────────────────────────────
-DATASET_REPO_ID = "langningchen/luogu-captcha-dataset"
-TFRECORD_DIR = "data/luogu_captcha_tfrecord"
-CHAR_SIZE = 256
-CHARS_PER_LABEL = 4
-SAMPLES_PER_TFRECORD = 5000
-IMG_HEIGHT, IMG_WIDTH = 35, 90
+from config import (
+    DATASET_REPO_ID,
+    TFRECORD_DIR,
+    CHARS_PER_LABEL,
+    SAMPLES_PER_TFRECORD,
+    IMG_HEIGHT,
+    IMG_WIDTH,
+)
 
 
-# ── TFRecord 序列化（照抄 generate.py） ─────────────────────────
 def _bytes_feature(value):
     """Returns a bytes_list from a string / byte."""
     if isinstance(value, type(tf.constant(0))):
@@ -200,7 +199,7 @@ def main():
     write_tfrecords(dataset_dict, args.tfrecord_dir, args.samples_per_file)
 
     print("\n✅ Done! TFRecord files saved to:", args.tfrecord_dir)
-    print("You can now run train.py or train.v2.py to train the model.")
+    print("You can now run train.py to train the model.")
 
 
 if __name__ == "__main__":

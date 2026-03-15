@@ -1,30 +1,34 @@
 # Copyright (C) 2025 Langning Chen
-# 
+#
 # This file is part of luoguCaptcha.
-# 
+#
 # luoguCaptcha is free software: you can redistribute it and/or modify
 # it under the terms of the GNU General Public License as published by
 # the Free Software Foundation, either version 3 of the License, or
 # (at your option) any later version.
-# 
+#
 # luoguCaptcha is distributed in the hope that it will be useful,
 # but WITHOUT ANY WARRANTY; without even the implied warranty of
 # MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
 # GNU General Public License for more details.
-# 
+#
 # You should have received a copy of the GNU General Public License
 # along with luoguCaptcha.  If not, see <https://www.gnu.org/licenses/>.
 
 import numpy as np
 import tensorflow as tf
-from keras.api.models import load_model
 from PIL import Image
 import sys
-import os
-import http.server
 import io
 import json
 import base64
+import http.server
+
+# 导入自定义层（触发注册），使 load_model 能识别自定义对象
+import model  # noqa: F401
+from config import CHAR_SIZE, CHARS_PER_LABEL, IMG_HEIGHT, IMG_WIDTH, MODEL_PATH
+
+from keras.api.models import load_model
 
 # 自动选择设备
 physical_devices = tf.config.list_physical_devices("GPU")
@@ -34,11 +38,7 @@ if physical_devices:
 else:
     print("Using CPU")
 
-CharSize = 256
-CharsPerLabel = 4
-IMG_HEIGHT, IMG_WIDTH = 35, 90
-
-model_path = "/home/cyezoi/luoguCaptcha/luoguCaptcha.keras"
+model_path = MODEL_PATH
 
 # 加载模型
 try:

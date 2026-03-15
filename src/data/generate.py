@@ -28,11 +28,13 @@ import numpy as np
 import tensorflow as tf
 import math
 
-DATA_DIR = "data/luogu_captcha_dataset"
-TFRECORD_DIR = "data/luogu_captcha_tfrecord"
-CHAR_SIZE = 256
-CHARS_PER_LABEL = 4
-SAMPLES_PER_TFRECORD = 5000
+from config import (
+    DATA_DIR,
+    TFRECORD_DIR,
+    CHAR_SIZE,
+    CHARS_PER_LABEL,
+    SAMPLES_PER_TFRECORD,
+)
 
 
 def _bytes_feature(value):
@@ -190,7 +192,7 @@ def write_tfrecords(dataset_dict, tfrecord_dir, samples_per_file=5000):
 
 if __name__ == "__main__":
     if len(argv) != 3:
-        print("Usage: python scripts/generate.py <TotalImages> <WorkersCount>")
+        print("Usage: python scripts/data/generate.py <TotalImages> <WorkersCount>")
         exit(1)
 
     total_images = int(argv[1])
@@ -281,6 +283,6 @@ if __name__ == "__main__":
         print(f"Failed to export TFRecords: {e}")
 
     print(
-        f"Run `python scripts/huggingface.py upload_dataset {DATA_DIR}` to upload Hugging Face dataset."
+        f"Run `python scripts/data/huggingface.py upload_dataset {DATA_DIR}` to upload Hugging Face dataset."
     )
     print(f"TFRecord files are saved in '{TFRECORD_DIR}'.")

@@ -44,13 +44,16 @@ from keras.models import load_model
 from matplotlib import pyplot as plt
 from PIL import Image
 
-
-# Model/input config (must match training/predict.py)
-IMG_HEIGHT, IMG_WIDTH = 35, 90
-CHARS_PER_LABEL = 4
-CHAR_SIZE = 256  # per predict.py
-MODEL_PATH = os.path.join("models", "luoguCaptcha.keras")
-LUOGU_CAPTCHA_URL = "https://www.luogu.com.cn/api/verify/captcha"
+# 导入自定义层（触发注册）
+import model  # noqa: F401
+from config import (
+    IMG_HEIGHT,
+    IMG_WIDTH,
+    CHARS_PER_LABEL,
+    CHAR_SIZE,
+    MODEL_PATH,
+    LUOGU_CAPTCHA_URL,
+)
 
 
 def setup_device():

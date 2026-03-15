@@ -1,31 +1,36 @@
 # Copyright (C) 2025 Langning Chen
-# 
+#
 # This file is part of luoguCaptcha.
-# 
+#
 # luoguCaptcha is free software: you can redistribute it and/or modify
 # it under the terms of the GNU General Public License as published by
 # the Free Software Foundation, either version 3 of the License, or
 # (at your option) any later version.
-# 
+#
 # luoguCaptcha is distributed in the hope that it will be useful,
 # but WITHOUT ANY WARRANTY; without even the implied warranty of
 # MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
 # GNU General Public License for more details.
-# 
+#
 # You should have received a copy of the GNU General Public License
 # along with luoguCaptcha.  If not, see <https://www.gnu.org/licenses/>.
 
-import os
 import sys
 import numpy as np
 from datasets import load_dataset, load_from_disk
 from matplotlib import pyplot as plt
 
-# 假设你的数据集 ID 和形状
-DATASET_PATH_HUB = "langningchen/luogu-captcha-dataset" 
-DATASET_PATH_LOCAL = "data/luogu_captcha_dataset"
-IMG_HEIGHT, IMG_WIDTH = 35, 90
-CHARS_PER_LABEL = 4
+from config import (
+    DATASET_REPO_ID,
+    DATA_DIR,
+    IMG_HEIGHT,
+    IMG_WIDTH,
+    CHARS_PER_LABEL,
+)
+
+DATASET_PATH_HUB = DATASET_REPO_ID
+DATASET_PATH_LOCAL = DATA_DIR
+
 
 def preview_dataset(source_path, from_hub=True, num_samples=5):
     """
@@ -102,11 +107,14 @@ def preview_dataset(source_path, from_hub=True, num_samples=5):
         # 3. 显示图像
         ax = axes[i]
         # 移除单通道维度以供 matplotlib 显示 (35, 90, 1) -> (35, 90)
-        display_img = np.squeeze(image_np) 
+        display_img = np.squeeze(image_np)
         
-        ax.imshow(display_img, cmap='gray')
-        ax.set_title(f"Sample {i} | Label (Sparse): {label_np} | Decoded: '{label_chars}'", fontsize=10)
-        ax.axis('off')
+        ax.imshow(display_img, cmap="gray")
+        ax.set_title(
+            f"Sample {i} | Label (Sparse): {label_np} | Decoded: '{label_chars}'",
+            fontsize=10,
+        )
+        ax.axis("off")
 
     plt.tight_layout()
     plt.show()
@@ -122,9 +130,9 @@ if __name__ == "__main__":
     source_type = sys.argv[1].lower()
     num_samples = int(sys.argv[2]) if len(sys.argv) > 2 else 5
     
-    if source_type == 'local':
+    if source_type == "local":
         preview_dataset(DATASET_PATH_LOCAL, from_hub=False, num_samples=num_samples)
-    elif source_type == 'hub':
+    elif source_type == "hub":
         preview_dataset(DATASET_PATH_HUB, from_hub=True, num_samples=num_samples)
     else:
         print("Invalid source type. Use 'local' or 'hub'.")

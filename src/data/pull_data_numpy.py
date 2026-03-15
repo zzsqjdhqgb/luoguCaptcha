@@ -1,4 +1,4 @@
-# Copyright (C) 2025 zzsqjdhqgb
+# Copyright (C) 2026 zzsqjdhqgb
 #
 # This file is part of luoguCaptcha.
 #
@@ -33,12 +33,13 @@ import numpy as np
 from datasets import load_dataset
 from tqdm import tqdm
 
-# ── 常量 ──────────────────────────────────────────────────────────
-DATASET_REPO_ID = "langningchen/luogu-captcha-dataset"
-OUTPUT_DIR = "data/luogu_captcha_numpy"
-CHAR_SIZE = 256
-CHARS_PER_LABEL = 4
-IMG_HEIGHT, IMG_WIDTH = 35, 90
+from config import (
+    DATASET_REPO_ID,
+    NUMPY_DIR,
+    CHARS_PER_LABEL,
+    IMG_HEIGHT,
+    IMG_WIDTH,
+)
 
 
 def convert_split(dataset, split_name: str, output_dir: str):
@@ -122,8 +123,8 @@ def main():
     parser.add_argument(
         "--output-dir",
         type=str,
-        default=OUTPUT_DIR,
-        help=f"Output directory for .npz files (default: {OUTPUT_DIR})",
+        default=NUMPY_DIR,
+        help=f"Output directory for .npz files (default: {NUMPY_DIR})",
     )
     args = parser.parse_args()
 

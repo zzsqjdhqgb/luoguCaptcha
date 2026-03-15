@@ -1,4 +1,3 @@
-import os
 import sys
 from collections import Counter
 import numpy as np
@@ -128,7 +127,8 @@ def count_labels(source_path, from_hub=True, split="train", top_n=10, batch_size
     for label, count in most_common:
         # 使用 f-string 的对齐功能
         print(
-            f"  Captcha: {label:<{max_label_len}} | Count: {count:>6} | Frequency: {count/total_counted_samples*100:.4f}%"
+            f"  Captcha: {label:<{max_label_len}} | Count: {count:>6} "
+            f"| Frequency: {count / total_counted_samples * 100:.4f}%"
         )
 
     print("=" * 70)
