@@ -124,7 +124,7 @@ class LearningRateLogger(keras.callbacks.Callback):
 def save_training_plots(history, learning_rates, save_dir: str):
     """
     保存训练曲线图，包含 4 个子图：
-    1. Loss (train & val)
+    1. Loss (log scale)
     2. Accuracy (train & val)
     3. Learning Rate
     4. Val Loss (放大)
@@ -134,15 +134,20 @@ def save_training_plots(history, learning_rates, save_dir: str):
     fig, axes = plt.subplots(2, 2, figsize=(14, 10))
     fig.suptitle("Training History", fontsize=16, fontweight="bold")
 
-    # ── 1. Loss ──
+    # ── 1. Loss (Log Scale) ──
     ax = axes[0, 0]
     ax.plot(epochs, history.history["loss"], "b-", label="Train Loss", linewidth=1.5)
     ax.plot(epochs, history.history["val_loss"], "r-", label="Val Loss", linewidth=1.5)
     ax.set_xlabel("Epoch")
-    ax.set_ylabel("Loss")
-    ax.set_title("Loss")
+    ax.set_ylabel("Loss (Log Scale)")
+    ax.set_title("Loss (Log Scale)")
+    
+    # 核心修改：设置 Y 轴为对数尺度
+    ax.set_yscale("log") 
+    
     ax.legend()
-    ax.grid(True, alpha=0.3)
+    # 对于对数坐标，显示主次网格线会让图表更容易阅读
+    ax.grid(True, which='both', linestyle='-', alpha=0.2)
 
     # ── 2. Accuracy ──
     ax = axes[0, 1]
