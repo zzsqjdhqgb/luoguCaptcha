@@ -305,9 +305,13 @@ Epoch 20/150
 
 发现一直到early stop也没有过拟合，因此增加patience到60epoch试试（failed, val_loss 0.2221, worse）
 
-然后还是爆炸了。下一步是重启的余弦退火
+然后还是爆炸了。下一步是重启的余弦退火(total failure, val loss 0.3876 )，
 
-，然后再换成重启的余弦退火试试，再不行试试val loss不降再减小lr的策略。
+又想到或许直接保留1e5最小lr，然后直接提升patience说不准有用
+
+上面所有提高lr下限以后的实验都作废（其实只有裸的增加patience作废
+
+再不行试试val loss不降再减小lr的策略。
 
 一定要先处理好学习率下降，然后先加个正则化试试，并增加epoch，说不准还能再优化
 
