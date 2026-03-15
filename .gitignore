@@ -1,6 +1,6 @@
 captcha.jpg
 vendor/
 venv*/
-data/
+/data/
 .vscode
 repomix-output.xml
