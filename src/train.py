@@ -69,36 +69,9 @@ NUM_PATCHES = NUM_PATCHES_H * NUM_PATCHES_W  # 7 * 18 = 126
 
 # ── 固定随机种子 ──────────────────────────────────────────────────
 def set_all_seeds(seed: int):
-    """尽可能保证可复现性"""
-    import random
-    
-    # Python 原生
-    random.seed(seed)
-    os.environ["PYTHONHASHSEED"] = str(seed)
-    
-    # NumPy
     np.random.seed(seed)
-    
-    # Keras 3 统一接口（会设置后端种子）
     keras.utils.set_random_seed(seed)
-    
-    # ★ Keras 3 确定性模式（强制所有 op 使用确定性实现）
-    try:
-        keras.config.enable_reproducibility()
-    except AttributeError:
-        # 某些版本可能没有这个 API
-        pass
-    
-    # ★ JAX / XLA 确定性
-    os.environ["XLA_FLAGS"] = (
-        os.environ.get("XLA_FLAGS", "") + 
-        " --xla_gpu_deterministic_ops=true"
-    )
-    
-    # ★ CUDA 确定性（GPU 场景）
-    os.environ["TF_DETERMINISTIC_OPS"] = "1"
-    os.environ["TF_CUDNN_DETERMINISTIC"] = "1"
-    os.environ["CUBLAS_WORKSPACE_CONFIG"] = ":4096:8"
+    os.environ["PYTHONHASHSEED"] = str(seed)
 
 
 set_all_seeds(RANDOM_SEED)
