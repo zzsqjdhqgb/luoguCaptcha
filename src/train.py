@@ -47,7 +47,7 @@ from config import (
     MODEL_DIR,
     VIT_MODEL_PATH,
 )
-from model import build_vit_captcha_model, WarmupCosineDecay
+from model import build_vit_captcha_model
 from data.load import load_captcha_data
 
 # ── 训练超参数 ────────────────────────────────────────────────────
@@ -285,8 +285,13 @@ def main():
     total_steps = steps_per_epoch * args.epochs
     print(f"Steps per epoch: {steps_per_epoch}, Total steps: {total_steps}")
 
-    lr_schedule = WarmupCosineDecay(
-        warmup_steps=2000, max_lr=6e-4, total_steps=total_steps
+    # Keras 3 的 CosineDecay 已经内置 warmup_target 参数！
+    lr_schedule = keras.optimizers.schedules.CosineDecay(
+        initial_learning_rate=0.0,       # warmup 起始
+        decay_steps=total_steps,
+        alpha=1e-5,                      # 最终学习率（不会降到0）
+        warmup_target=6e-4,              # warmup 目标峰值
+        warmup_steps=2000,               # warmup 步数
     )
 
     model.compile(

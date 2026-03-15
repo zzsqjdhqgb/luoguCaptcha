@@ -30,7 +30,6 @@ from model.layers import (
     TransformerEncoder,
     ExtractCLSTokens,
 )
-from model.lr_schedule import WarmupCosineDecay
 from model.vit import build_vit_captcha_model
 
 __all__ = [
@@ -40,6 +39,5 @@ __all__ = [
     "TransformerEncoderBlock",
     "TransformerEncoder",
     "ExtractCLSTokens",
-    "WarmupCosineDecay",
     "build_vit_captcha_model",
 ]
