@@ -114,8 +114,8 @@ class LearningRateLogger(keras.callbacks.Callback):
 
         if logs is not None:
             logs["lr"] = lr_value
-
-        print(f"  ↳ Learning rate: {lr_value:.2e}")
+        else:
+            print(f"  ↳ Learning rate: {lr_value:.2e}")
 
 
 # ╔══════════════════════════════════════════════════════════════╗
