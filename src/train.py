@@ -46,6 +46,7 @@ from config import (
     NUMPY_DIR,
     MODEL_DIR,
     VIT_MODEL_PATH,
+    CHECKPOINT_MODEL_PATH,
 )
 from model import build_vit_captcha_model
 from data.load import load_captcha_data
@@ -290,6 +291,12 @@ def main():
             monitor="val_loss",
             patience=15,
             restore_best_weights=True,
+        ),
+        keras.callbacks.ModelCheckpoint(
+            filepath=CHECKPOINT_MODEL_PATH,      # 或者用别的路径如 "best_model.keras"
+            monitor="val_loss",
+            save_best_only=True,          # ← 只在 val_loss 创新低时保存
+            verbose=1,
         ),
         lr_logger,
     ]
