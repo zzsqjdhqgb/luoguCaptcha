@@ -17,7 +17,7 @@
 
 """
 Vision Transformer 验证码识别训练脚本。
-Keras 3 + PyTorch 后端，数据从 NumPy .npz 加载。
+Keras 3 + JAX 后端，数据从 NumPy .npz 加载（全量装入内存）。
 
 Usage:
   python train.py [--data-dir DIR] [--epochs N] [--batch-size N]
@@ -27,12 +27,11 @@ import os
 import argparse
 
 # ── 设置后端（必须在 import keras 之前） ──────────────────────────
-os.environ["KERAS_BACKEND"] = "torch"
+os.environ["KERAS_BACKEND"] = "jax"
 
 import numpy as np
-import torch
-from torch.utils.data import Dataset, DataLoader
 
+import jax
 import keras
 import matplotlib
 
@@ -49,6 +48,7 @@ from config import (
     VIT_MODEL_PATH,
 )
 from model import build_vit_captcha_model, WarmupCosineDecay
+from data.load import load_captcha_data
 
 # ── 训练超参数 ────────────────────────────────────────────────────
 RANDOM_SEED = 484858
@@ -70,11 +70,6 @@ NUM_PATCHES = NUM_PATCHES_H * NUM_PATCHES_W  # 7 * 18 = 126
 # ── 固定随机种子 ──────────────────────────────────────────────────
 def set_all_seeds(seed: int):
     np.random.seed(seed)
-    torch.manual_seed(seed)
-    if torch.cuda.is_available():
-        torch.cuda.manual_seed_all(seed)
-        torch.backends.cudnn.deterministic = True
-        torch.backends.cudnn.benchmark = False
     keras.utils.set_random_seed(seed)
     os.environ["PYTHONHASHSEED"] = str(seed)
 
@@ -82,99 +77,12 @@ def set_all_seeds(seed: int):
 set_all_seeds(RANDOM_SEED)
 
 # ── 设备信息 ──────────────────────────────────────────────────────
-if torch.cuda.is_available():
-    print(f"Using GPU: {torch.cuda.get_device_name(0)}")
-    print(f"  CUDA version: {torch.version.cuda}")
-    print(f"  Device count: {torch.cuda.device_count()}")
-else:
-    print("Using CPU")
-
+jax_devices = jax.devices()
+print(f"JAX devices   : {jax_devices}")
+print(f"JAX backend   : {jax.default_backend()}")
 print(f"Keras version : {keras.__version__}")
 print(f"Backend       : {keras.backend.backend()}")
-print(f"PyTorch       : {torch.__version__}")
 print(f"Random seed   : {RANDOM_SEED}")
-
-
-# ╔══════════════════════════════════════════════════════════════╗
-# ║  PyTorch Dataset + DataLoader                               ║
-# ╚══════════════════════════════════════════════════════════════╝
-class CaptchaDataset(Dataset):
-    """
-    从 .npz 文件加载验证码数据。
-    images: uint8 (N, H, W, 1) → float32 [0, 1]
-    labels: int32 (N, 4)
-    """
-
-    def __init__(self, npz_path: str):
-        data = np.load(npz_path)
-        self.images = data["images"].astype(np.float32) / 255.0  # (N, H, W, 1)
-        self.labels = data["labels"].astype(np.int64)  # (N, 4)
-        print(
-            f"  Loaded {len(self.images)} samples from {npz_path} "
-            f"(images: {self.images.shape}, labels: {self.labels.shape})"
-        )
-
-    def __len__(self):
-        return len(self.images)
-
-    def __getitem__(self, idx):
-        image = self.images[idx]  # (H, W, 1), float32
-        label = self.labels[idx]  # (4,), int64
-        return image, label
-
-
-def numpy_collate(batch):
-    """
-    自定义 collate 函数：保持 NumPy 数组格式。
-    Keras 3 的 model.fit() 接受 NumPy 数组。
-    """
-    images, labels = zip(*batch)
-    images = np.stack(images, axis=0)
-    labels = np.stack(labels, axis=0)
-    return images, labels
-
-
-def create_data_loaders(data_dir: str, batch_size: int):
-    """创建训练和验证的 DataLoader。"""
-    train_path = os.path.join(data_dir, "train.npz")
-    test_path = os.path.join(data_dir, "test.npz")
-
-    if not os.path.exists(train_path):
-        raise FileNotFoundError(
-            f"Train data not found: {train_path}\n"
-            f"Run pull_data_numpy.py or tfrecord2numpy.py first."
-        )
-    if not os.path.exists(test_path):
-        raise FileNotFoundError(
-            f"Test data not found: {test_path}\n"
-            f"Run pull_data_numpy.py or tfrecord2numpy.py first."
-        )
-
-    print("Loading data...")
-    train_dataset = CaptchaDataset(train_path)
-    test_dataset = CaptchaDataset(test_path)
-
-    train_loader = DataLoader(
-        train_dataset,
-        batch_size=batch_size,
-        shuffle=True,
-        num_workers=4,
-        pin_memory=False,
-        drop_last=False,
-        collate_fn=numpy_collate,
-        generator=torch.Generator().manual_seed(RANDOM_SEED),
-    )
-    test_loader = DataLoader(
-        test_dataset,
-        batch_size=batch_size,
-        shuffle=False,
-        num_workers=4,
-        pin_memory=False,
-        drop_last=False,
-        collate_fn=numpy_collate,
-    )
-
-    return train_loader, test_loader
 
 
 # ╔══════════════════════════════════════════════════════════════╗
@@ -294,7 +202,7 @@ def save_training_plots(history, learning_rates, save_dir: str):
 # ╚══════════════════════════════════════════════════════════════╝
 def main():
     parser = argparse.ArgumentParser(
-        description="Train ViT captcha model (Keras 3 + PyTorch backend)"
+        description="Train ViT captcha model (Keras 3 + JAX backend)"
     )
     parser.add_argument(
         "--data-dir",
@@ -313,11 +221,9 @@ def main():
     )
     args = parser.parse_args()
 
-    # 加载数据
+    # 加载数据（全量装入内存）
     try:
-        train_loader, val_loader = create_data_loaders(
-            args.data_dir, args.batch_size
-        )
+        (x_train, y_train), (x_test, y_test) = load_captcha_data(args.data_dir)
         print("Data loaded successfully\n")
     except Exception as e:
         print(f"Error loading data: {e}")
@@ -327,6 +233,7 @@ def main():
     print("=" * 60)
     print("Building Vision Transformer (Encoder-Only) Model")
     print(f"  Backend    : {keras.backend.backend()}")
+    print(f"  JAX devices: {jax.devices()}")
     print(f"  Patch size : {PATCH_SIZE}x{PATCH_SIZE}")
     print(f"  Num patches: {NUM_PATCHES} ({NUM_PATCHES_H}x{NUM_PATCHES_W})")
     print(f"  D_model    : {D_MODEL}")
@@ -347,7 +254,7 @@ def main():
     )
 
     # 估算 total steps 用于学习率调度
-    steps_per_epoch = len(train_loader)
+    steps_per_epoch = int(np.ceil(len(x_train) / args.batch_size))
     total_steps = steps_per_epoch * args.epochs
     print(f"Steps per epoch: {steps_per_epoch}, Total steps: {total_steps}")
 
@@ -382,11 +289,14 @@ def main():
         lr_logger,
     ]
 
-    # 训练
+    # 训练（直接传入 NumPy 数组，Keras 3 会自动处理 batching 和 shuffling）
     history = model.fit(
-        train_loader,
-        validation_data=val_loader,
+        x_train,
+        y_train,
+        validation_data=(x_test, y_test),
         epochs=args.epochs,
+        batch_size=args.batch_size,
+        shuffle=True,
         callbacks=callbacks,
     )
 
@@ -397,7 +307,7 @@ def main():
     model.save(VIT_MODEL_PATH)
     print(f"\nModel saved to {VIT_MODEL_PATH}")
     print(
-        f"Run `python -m src.data.huggingface upload_model {VIT_MODEL_PATH}` "
+        f"Run `python -m data.huggingface upload_model {VIT_MODEL_PATH}` "
         f"to upload."
     )
 
