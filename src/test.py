@@ -65,14 +65,14 @@ def detect_and_set_backend(preferred: str = "auto") -> str:
     
     # 检测 PyTorch
     try:
-        import torch
+        import torch # type: ignore
         backends_to_try.append(("torch", torch.__version__))
     except ImportError:
         pass
     
     # 检测 TensorFlow
     try:
-        import tensorflow as tf
+        import tensorflow as tf # type: ignore
         backends_to_try.append(("tensorflow", tf.__version__))
     except ImportError:
         pass

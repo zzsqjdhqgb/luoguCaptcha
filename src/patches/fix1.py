@@ -53,14 +53,14 @@ def detect_working_backend():
         pass
 
     try:
-        import tensorflow  # noqa: F401
+        import tensorflow  # type: ignore # noqa: F401
         backends.append("tensorflow")
     except ImportError:
         pass
 
     # PyTorch 是有问题的后端，放最后作为 fallback
     try:
-        import torch  # noqa: F401
+        import torch  # type: ignore # noqa: F401
         backends.append("torch")
     except ImportError:
         pass
