@@ -3,3 +3,4 @@ vendor/
 venv*/
 data/
 .vscode
+repomix-output.xml
