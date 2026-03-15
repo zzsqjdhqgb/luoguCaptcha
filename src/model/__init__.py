@@ -27,6 +27,7 @@ from model.layers import (
     LearnedPositionalEncoding,
     CLSTokens,
     TransformerEncoderBlock,
+    TransformerEncoder,
     ExtractCLSTokens,
 )
 from model.lr_schedule import WarmupCosineDecay
@@ -37,6 +38,7 @@ __all__ = [
     "LearnedPositionalEncoding",
     "CLSTokens",
     "TransformerEncoderBlock",
+    "TransformerEncoder",
     "ExtractCLSTokens",
     "WarmupCosineDecay",
     "build_vit_captcha_model",

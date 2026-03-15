@@ -180,3 +180,43 @@ class ExtractCLSTokens(layers.Layer):
         config = super().get_config()
         config.update({"num_tokens": self.num_tokens})
         return config
+
+ 
+@keras.saving.register_keras_serializable(package="luoguCaptcha")
+class TransformerEncoder(layers.Layer):
+    """堆叠多个 TransformerEncoderBlock，可直接用于 Sequential。"""
+
+    def __init__(self, d_model, num_heads, dff, num_layers, dropout_rate=0.1, **kwargs):
+        super().__init__(**kwargs)
+        self.d_model = d_model
+        self.num_heads = num_heads
+        self.dff = dff
+        self.num_layers = num_layers
+        self.dropout_rate = dropout_rate
+
+        self.blocks = [
+            TransformerEncoderBlock(
+                d_model=d_model,
+                num_heads=num_heads,
+                dff=dff,
+                dropout_rate=dropout_rate,
+                name=f"transformer_block_{i}",
+            )
+            for i in range(num_layers)
+        ]
+
+    def call(self, x, training=None):
+        for block in self.blocks:
+            x = block(x, training=training)
+        return x
+
+    def get_config(self):
+        config = super().get_config()
+        config.update({
+            "d_model": self.d_model,
+            "num_heads": self.num_heads,
+            "dff": self.dff,
+            "num_layers": self.num_layers,
+            "dropout_rate": self.dropout_rate,
+        })
+        return config

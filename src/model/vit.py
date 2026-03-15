@@ -17,6 +17,8 @@
 
 """
 Vision Transformer (Encoder-Only) 验证码识别模型构建函数。
+
+使用 keras.Sequential 风格组装模型。
 """
 
 import keras
@@ -27,7 +29,7 @@ from model.layers import (
     PatchEmbedding,
     LearnedPositionalEncoding,
     CLSTokens,
-    TransformerEncoderBlock,
+    TransformerEncoder,
     ExtractCLSTokens,
 )
 
@@ -39,9 +41,9 @@ def build_vit_captcha_model(
     num_layers: int = 4,
     dff: int = 256,
     dropout_rate: float = 0.1,
-) -> keras.Model:
+) -> keras.Sequential:
     """
-    构建 Vision Transformer (Encoder-Only) 验证码识别模型。
+    构建 Vision Transformer 验证码识别模型（Sequential 风格）。
 
     Args:
         patch_size: patch 边长，需要能整除 IMG_HEIGHT 和 IMG_WIDTH。
@@ -52,7 +54,7 @@ def build_vit_captcha_model(
         dropout_rate: Dropout 比率。
 
     Returns:
-        编译前的 keras.Model。
+        keras.Sequential 模型。
     """
     assert IMG_HEIGHT % patch_size == 0, (
         f"IMG_HEIGHT ({IMG_HEIGHT}) must be divisible by patch_size ({patch_size})"
@@ -61,52 +63,46 @@ def build_vit_captcha_model(
         f"IMG_WIDTH ({IMG_WIDTH}) must be divisible by patch_size ({patch_size})"
     )
 
-    num_patches_h = IMG_HEIGHT // patch_size
-    num_patches_w = IMG_WIDTH // patch_size
-    num_patches = num_patches_h * num_patches_w
+    num_patches = (IMG_HEIGHT // patch_size) * (IMG_WIDTH // patch_size)
 
-    inputs = keras.Input(shape=(IMG_HEIGHT, IMG_WIDTH, 1), name="input")
+    model = keras.Sequential(name="LuoguCaptcha_ViT")
 
-    # Patch Embedding
-    x = PatchEmbedding(
-        patch_size=patch_size, d_model=d_model, name="patch_embedding"
-    )(inputs)
+    # 输入形状声明
+    model.add(keras.Input(shape=(IMG_HEIGHT, IMG_WIDTH, 1), name="input"))
 
-    # CLS tokens
-    x = CLSTokens(
-        num_tokens=CHARS_PER_LABEL, d_model=d_model, name="cls_tokens"
-    )(x)
-
-    # 位置编码
-    x = LearnedPositionalEncoding(
+    # ---- 编码 ----
+    model.add(PatchEmbedding(
+        patch_size=patch_size, d_model=d_model, name="patch_embedding",
+    ))
+    model.add(CLSTokens(
+        num_tokens=CHARS_PER_LABEL, d_model=d_model, name="cls_tokens",
+    ))
+    model.add(LearnedPositionalEncoding(
         num_positions=CHARS_PER_LABEL + num_patches,
         d_model=d_model,
         name="positional_encoding",
-    )(x)
-    x = layers.Dropout(dropout_rate)(x)
+    ))
+    model.add(layers.Dropout(dropout_rate, name="pos_dropout"))
 
-    # Transformer Encoder
-    for i in range(num_layers):
-        x = TransformerEncoderBlock(
-            d_model=d_model,
-            num_heads=num_heads,
-            dff=dff,
-            dropout_rate=dropout_rate,
-            name=f"transformer_block_{i}",
-        )(x)
+    # ---- Transformer 编码器 ----
+    model.add(TransformerEncoder(
+        d_model=d_model,
+        num_heads=num_heads,
+        dff=dff,
+        num_layers=num_layers,
+        dropout_rate=dropout_rate,
+        name="transformer_encoder",
+    ))
 
-    # Final LayerNorm
-    x = layers.LayerNormalization(epsilon=1e-6, name="final_norm")(x)
+    # ---- 输出 ----
+    model.add(layers.LayerNormalization(epsilon=1e-6, name="final_norm"))
+    model.add(ExtractCLSTokens(
+        num_tokens=CHARS_PER_LABEL, name="extract_cls",
+    ))
+    model.add(layers.Dense(dff, activation="gelu", name="cls_head_dense"))
+    model.add(layers.Dropout(dropout_rate, name="cls_head_dropout"))
+    model.add(layers.Dense(
+        CHAR_SIZE, activation="softmax", name="cls_head_output",
+    ))
 
-    # 提取 CLS tokens
-    x = ExtractCLSTokens(num_tokens=CHARS_PER_LABEL, name="extract_cls")(x)
-
-    # 分类头
-    x = layers.Dense(dff, activation="gelu", name="cls_head_dense")(x)
-    x = layers.Dropout(dropout_rate)(x)
-    outputs = layers.Dense(
-        CHAR_SIZE, activation="softmax", name="cls_head_output"
-    )(x)
-
-    model = keras.Model(inputs=inputs, outputs=outputs, name="LuoguCaptcha_ViT")
     return model
