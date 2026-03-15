@@ -77,7 +77,7 @@ NUM_HEADS = 4  # 多头注意力头数 (8 -> 4)
 NUM_LAYERS = 4  # Transformer encoder层数 (6 -> 4)
 DFF = 256  # 前馈网络中间层维度 (512 -> 256)
 DROPOUT_RATE = 0.1
-EPOCHS = 150
+EPOCHS = 300
 BATCH_SIZE = 256
 DATA_DIR = "data/luogu_captcha_numpy"
 
