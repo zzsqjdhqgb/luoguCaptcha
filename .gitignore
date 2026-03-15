@@ -1,5 +1,8 @@
 captcha.jpg
 vendor/
 venv*/
-data/
+/data/
 .vscode
+repomix-output.xml
+__pycache__/
+repomix-output.md
