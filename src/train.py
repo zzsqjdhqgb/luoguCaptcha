@@ -263,7 +263,7 @@ def main():
     lr_schedule = keras.optimizers.schedules.CosineDecay(
         initial_learning_rate=0.0,       # warmup 起始
         decay_steps=total_steps,
-        alpha=1e-5,                      # 最终学习率（不会降到0）
+        alpha=1e-4,                      # 最终学习率（不会降到0）
         warmup_target=6e-4,              # warmup 目标峰值
         warmup_steps=2000,               # warmup 步数
     )
@@ -289,7 +289,7 @@ def main():
     callbacks = [
         keras.callbacks.EarlyStopping(
             monitor="val_loss",
-            patience=15,
+            patience=60,
             restore_best_weights=True,
         ),
         keras.callbacks.ModelCheckpoint(
