@@ -34,6 +34,10 @@ import torch
 from torch.utils.data import Dataset, DataLoader
 
 import keras
+import matplotlib
+
+matplotlib.use("Agg")  # 无头环境下使用非交互后端
+import matplotlib.pyplot as plt
 
 from config import (
     CHAR_SIZE,
@@ -174,6 +178,118 @@ def create_data_loaders(data_dir: str, batch_size: int):
 
 
 # ╔══════════════════════════════════════════════════════════════╗
+# ║  学习率记录回调                                               ║
+# ╚══════════════════════════════════════════════════════════════╝
+class LearningRateLogger(keras.callbacks.Callback):
+    """每个 epoch 结束时记录当前学习率。"""
+
+    def __init__(self):
+        super().__init__()
+        self.learning_rates = []
+
+    def on_epoch_end(self, epoch, logs=None):
+        optimizer = self.model.optimizer
+        # 获取当前学习率
+        if hasattr(optimizer, "learning_rate"):
+            lr = optimizer.learning_rate
+            # 如果是调度器，需要用当前 step 求值
+            if callable(lr):
+                current_step = optimizer.iterations
+                lr_value = float(lr(current_step))
+            else:
+                lr_value = float(lr)
+        else:
+            lr_value = float(keras.backend.get_value(optimizer.lr))
+
+        self.learning_rates.append(lr_value)
+
+        if logs is not None:
+            logs["lr"] = lr_value
+
+        print(f"  ↳ Learning rate: {lr_value:.2e}")
+
+
+# ╔══════════════════════════════════════════════════════════════╗
+# ║  绘图                                                        ║
+# ╚══════════════════════════════════════════════════════════════╝
+def save_training_plots(history, learning_rates, save_dir: str):
+    """
+    保存训练曲线图，包含 4 个子图：
+    1. Loss (train & val)
+    2. Accuracy (train & val)
+    3. Learning Rate
+    4. Val Loss (放大)
+    """
+    epochs = range(1, len(history.history["loss"]) + 1)
+
+    fig, axes = plt.subplots(2, 2, figsize=(14, 10))
+    fig.suptitle("Training History", fontsize=16, fontweight="bold")
+
+    # ── 1. Loss ──
+    ax = axes[0, 0]
+    ax.plot(epochs, history.history["loss"], "b-", label="Train Loss", linewidth=1.5)
+    ax.plot(epochs, history.history["val_loss"], "r-", label="Val Loss", linewidth=1.5)
+    ax.set_xlabel("Epoch")
+    ax.set_ylabel("Loss")
+    ax.set_title("Loss")
+    ax.legend()
+    ax.grid(True, alpha=0.3)
+
+    # ── 2. Accuracy ──
+    ax = axes[0, 1]
+    ax.plot(
+        epochs, history.history["accuracy"], "b-",
+        label="Train Accuracy", linewidth=1.5,
+    )
+    ax.plot(
+        epochs, history.history["val_accuracy"], "r-",
+        label="Val Accuracy", linewidth=1.5,
+    )
+    ax.set_xlabel("Epoch")
+    ax.set_ylabel("Accuracy")
+    ax.set_title("Accuracy")
+    ax.legend()
+    ax.grid(True, alpha=0.3)
+
+    # ── 3. Learning Rate ──
+    ax = axes[1, 0]
+    lr_epochs = range(1, len(learning_rates) + 1)
+    ax.plot(lr_epochs, learning_rates, "g-", linewidth=1.5)
+    ax.set_xlabel("Epoch")
+    ax.set_ylabel("Learning Rate")
+    ax.set_title("Learning Rate Schedule")
+    ax.set_yscale("log")
+    ax.grid(True, alpha=0.3)
+
+    # ── 4. Val Loss 放大 ──
+    ax = axes[1, 1]
+    val_loss = history.history["val_loss"]
+    ax.plot(epochs, val_loss, "r-", linewidth=1.5)
+    # 标注最低点
+    best_epoch = int(np.argmin(val_loss)) + 1
+    best_val_loss = min(val_loss)
+    ax.axvline(x=best_epoch, color="gray", linestyle="--", alpha=0.7)
+    ax.annotate(
+        f"Best: {best_val_loss:.4f}\n(epoch {best_epoch})",
+        xy=(best_epoch, best_val_loss),
+        xytext=(best_epoch + len(val_loss) * 0.05, best_val_loss * 1.1),
+        arrowprops=dict(arrowstyle="->", color="gray"),
+        fontsize=9,
+    )
+    ax.set_xlabel("Epoch")
+    ax.set_ylabel("Val Loss")
+    ax.set_title("Validation Loss (detail)")
+    ax.grid(True, alpha=0.3)
+
+    plt.tight_layout()
+
+    plot_path = os.path.join(save_dir, "loss_plot.png")
+    fig.savefig(plot_path, dpi=150, bbox_inches="tight")
+    plt.close(fig)
+    print(f"Training plot saved to {plot_path}")
+
+
+# ╔══════════════════════════════════════════════════════════════╗
 # ║  主流程                                                      ║
 # ╚══════════════════════════════════════════════════════════════╝
 def main():
@@ -254,19 +370,28 @@ def main():
 
     os.makedirs(MODEL_DIR, exist_ok=True)
 
+    # 回调
+    lr_logger = LearningRateLogger()
+
+    callbacks = [
+        keras.callbacks.EarlyStopping(
+            monitor="val_loss",
+            patience=15,
+            restore_best_weights=True,
+        ),
+        lr_logger,
+    ]
+
     # 训练
     history = model.fit(
         train_loader,
         validation_data=val_loader,
         epochs=args.epochs,
-        callbacks=[
-            keras.callbacks.EarlyStopping(
-                monitor="val_loss",
-                patience=15,
-                restore_best_weights=True,
-            ),
-        ],
+        callbacks=callbacks,
     )
+
+    # 保存训练曲线
+    save_training_plots(history, lr_logger.learning_rates, MODEL_DIR)
 
     # 保存模型
     model.save(VIT_MODEL_PATH)
