@@ -307,7 +307,9 @@ Epoch 20/150
 
 然后还是爆炸了。下一步是重启的余弦退火(total failure, val loss 0.3876 )，
 
-又想到或许直接保留1e5最小lr，然后直接提升patience说不准有用
+又想到或许直接保留1e5最小lr，然后直接提升patience说不准有用(failed, val loss 0.2728 worse)
+
+好像后期loss有点太大，尝试改成300epoch试试。但是根据lossplot，判断一下，如果不出意外，或许该加正则化了
 
 上面所有提高lr下限以后的实验都作废（其实只有裸的增加patience作废
 
