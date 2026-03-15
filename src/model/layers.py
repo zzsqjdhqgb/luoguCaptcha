@@ -174,7 +174,7 @@ class ExtractCLSTokens(layers.Layer):
         self.num_tokens = num_tokens
 
     def call(self, x):
-        return ops.slice(x, [0, 0, 0], [-1, self.num_tokens, -1])
+        return x[:, :self.num_tokens, :]
 
     def get_config(self):
         config = super().get_config()
