@@ -5,3 +5,4 @@ venv*/
 .vscode
 repomix-output.xml
 __pycache__/
+repomix-output.md
