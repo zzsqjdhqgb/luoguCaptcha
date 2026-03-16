@@ -19,6 +19,7 @@
 数据加载模块。
 
 从 NumPy .npz 文件加载验证码数据，自动检查并执行归一化，
+将标签中的小写字母统一转为大写（验证码不区分大小写），
 返回可直接用于 Keras model.fit() 的 NumPy 数组。
 
 Usage:
@@ -79,6 +80,39 @@ def _check_and_normalize(images: np.ndarray, name: str) -> np.ndarray:
     return images
 
 
+def _normalize_labels_to_upper(labels: np.ndarray, name: str) -> np.ndarray:
+    """
+    将标签中的小写字母 ASCII 码统一转为大写。
+
+    验证码不区分大小写，因此将 'a'-'z' (97-122) 映射到 'A'-'Z' (65-90)，
+    减少输出类别冗余。
+
+    Args:
+        labels: 标签数组，shape (N, CHARS_PER_LABEL)，值为 ASCII 码
+        name: 数据集名称（用于日志输出）
+
+    Returns:
+        转换后的标签数组（int64）
+    """
+    labels = labels.copy()
+    # 小写字母 ASCII 范围：97 ('a') ~ 122 ('z')
+    lowercase_mask = (labels >= ord('a')) & (labels <= ord('z'))
+    num_converted = int(lowercase_mask.sum())
+
+    if num_converted > 0:
+        # 小写转大写：减去 32 (ord('a') - ord('A') == 32)
+        labels[lowercase_mask] -= 32
+        total_chars = labels.size
+        print(
+            f"  [{name}] Labels uppercased: {num_converted}/{total_chars} chars converted "
+            f"({num_converted / total_chars * 100:.1f}%)"
+        )
+    else:
+        print(f"  [{name}] Labels already uppercase, no conversion needed")
+
+    return labels
+
+
 def _validate_shapes(
     images: np.ndarray, labels: np.ndarray, name: str
 ) -> tuple[np.ndarray, np.ndarray]:
@@ -128,6 +162,7 @@ def load_captcha_data(
     自动执行：
       1. 形状验证（确保 images 为 (N, H, W, 1)，labels 为 (N, 4)）
       2. 归一化检查（防止多次归一化）
+      3. 标签大小写统一（小写转大写，消除冗余类别）
 
     Args:
         data_dir: 包含 train.npz 和 test.npz 的目录路径。
@@ -136,7 +171,7 @@ def load_captcha_data(
     Returns:
         ((x_train, y_train), (x_test, y_test))
         - x_train, x_test: float32, shape (N, 35, 90, 1), 值域 [0, 1]
-        - y_train, y_test: int64, shape (N, 4)
+        - y_train, y_test: int64, shape (N, 4), 标签为大写字母/数字的 ASCII 码
     """
     if data_dir is None:
         data_dir = NUMPY_DIR
@@ -161,6 +196,7 @@ def load_captcha_data(
     x_train, y_train = train_data["images"], train_data["labels"]
     x_train, y_train = _validate_shapes(x_train, y_train, "train")
     x_train = _check_and_normalize(x_train, "train")
+    y_train = _normalize_labels_to_upper(y_train, "train")
     print(f"  [train] {x_train.shape[0]} samples loaded")
 
     # 加载 test
@@ -169,6 +205,7 @@ def load_captcha_data(
     x_test, y_test = test_data["images"], test_data["labels"]
     x_test, y_test = _validate_shapes(x_test, y_test, "test")
     x_test = _check_and_normalize(x_test, "test")
+    y_test = _normalize_labels_to_upper(y_test, "test")
     print(f"  [test]  {x_test.shape[0]} samples loaded")
 
     print(
