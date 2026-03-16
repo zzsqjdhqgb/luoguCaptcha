@@ -59,7 +59,7 @@ NUM_HEADS = 4
 NUM_LAYERS = 4
 DFF = 256
 DROPOUT_RATE = 0.1
-EPOCHS = 320
+EPOCHS = 450
 BATCH_SIZE = 256
 
 # 计算 patch 数量
@@ -268,9 +268,9 @@ def main():
     lr_schedule = keras.optimizers.schedules.CosineDecay(
         initial_learning_rate=0.0,       # warmup 起始
         decay_steps=total_steps,
-        alpha=1e-5,                      # 最终学习率（不会降到0）
-        warmup_target=2e-3,              # warmup 目标峰值
-        warmup_steps=4000,               # warmup 步数
+        alpha=1e-4,                      # 最终学习率（不会降到0）
+        warmup_target=6e-4,              # warmup 目标峰值
+        warmup_steps=2000,               # warmup 步数
     )
 
     model.compile(
@@ -294,7 +294,7 @@ def main():
     callbacks = [
         keras.callbacks.EarlyStopping(
             monitor="val_loss",
-            patience=120,
+            patience=60,
             restore_best_weights=True,
         ),
         keras.callbacks.ModelCheckpoint(

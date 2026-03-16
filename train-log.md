@@ -315,9 +315,13 @@ Epoch 20/150
 
 lr increase to 2e3, (failed but hopeful, val loss 0.2745)
 
-。但是根据lossplot，判断一下，如果不出意外，或许该加正则化了
+~~。但是根据lossplot，判断一下，如果不出意外，或许该加正则化了 ~~
 
-上面所有提高lr下限以后的实验都作废（其实只有裸的增加patience作废
+ - [x] 好像加过正则化了
+
+ - [x] 上面所有提高lr下限以后的实验都作废（其实只有裸的增加patience作废
+
+目前发现似乎 val loss=0.2221的那次效果最好。先restore到那一次，重新复现一遍。
 
 再不行试试val loss不降再减小lr的策略。
 
@@ -325,4 +329,4 @@ lr increase to 2e3, (failed but hopeful, val loss 0.2745)
 
 另外还需要判断目前的神经网络会不会太小，也可以试验一下
 
-还需要研究一下需不需要在潜空间使用transformer
+~~还需要研究一下需不需要在潜空间使用transformer（已经是了）~~
