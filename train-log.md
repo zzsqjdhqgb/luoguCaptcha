@@ -313,6 +313,8 @@ Epoch 20/150
 
 375 epoch (failed)
 
+lr increase to 2e3, (failed but hopeful, val loss 0.2745)
+
 。但是根据lossplot，判断一下，如果不出意外，或许该加正则化了
 
 上面所有提高lr下限以后的实验都作废（其实只有裸的增加patience作废
