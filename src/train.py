@@ -59,8 +59,9 @@ NUM_HEADS = 4
 NUM_LAYERS = 4
 DFF = 256
 DROPOUT_RATE = 0.1
-EPOCHS = 300
+EPOCHS = 1000
 BATCH_SIZE = 256
+INITIAL_LR = 8e-4
 
 # 计算 patch 数量
 NUM_PATCHES_H = IMG_HEIGHT // PATCH_SIZE  # 35 / 5 = 7
@@ -248,6 +249,7 @@ def main():
     print(f"  DFF        : {DFF}")
     print(f"  Batch size : {args.batch_size}")
     print(f"  Epochs     : {args.epochs}")
+    print(f"  LR schedule: ReduceLROnPlateau (initial={INITIAL_LR})")
     print("=" * 60 + "\n")
 
     model = build_vit_captcha_model(
@@ -259,23 +261,9 @@ def main():
         dropout_rate=DROPOUT_RATE,
     )
 
-    # 估算 total steps 用于学习率调度
-    steps_per_epoch = int(np.ceil(len(x_train) / args.batch_size))
-    total_steps = steps_per_epoch * args.epochs
-    print(f"Steps per epoch: {steps_per_epoch}, Total steps: {total_steps}")
-
-    # Keras 3 的 CosineDecay 已经内置 warmup_target 参数！
-    lr_schedule = keras.optimizers.schedules.CosineDecay(
-        initial_learning_rate=0.0,       # warmup 起始
-        decay_steps=total_steps,
-        alpha=1e-4,                      # 最终学习率（不会降到0）
-        warmup_target=6e-4,              # warmup 目标峰值
-        warmup_steps=2000,               # warmup 步数
-    )
-
     model.compile(
         optimizer=keras.optimizers.AdamW(
-            learning_rate=lr_schedule,
+            learning_rate=INITIAL_LR,
             weight_decay=1e-4,
             beta_1=0.9,
             beta_2=0.999,
@@ -294,13 +282,20 @@ def main():
     callbacks = [
         keras.callbacks.EarlyStopping(
             monitor="val_loss",
-            patience=60,
+            patience=40,
             restore_best_weights=True,
         ),
         keras.callbacks.ModelCheckpoint(
             filepath=CHECKPOINT_MODEL_PATH,      # 或者用别的路径如 "best_model.keras"
             monitor="val_loss",
             save_best_only=True,          # ← 只在 val_loss 创新低时保存
+            verbose=1,
+        ),
+        keras.callbacks.ReduceLROnPlateau(
+            monitor="val_loss",
+            factor=0.8,
+            patience=7,
+            min_lr=1e-5,
             verbose=1,
         ),
         lr_logger,

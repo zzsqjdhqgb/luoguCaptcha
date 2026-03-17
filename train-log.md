@@ -327,7 +327,7 @@ lr increase to 2e3, (failed but hopeful, val loss 0.2745)
 
 接下来的任务是先用300epoch再跑一遍。
 
-然后再试试val loss不降再减小lr的策略。
+然后再试试val loss不降再减小lr的策略。比较成功，loss压到了0.11
 
 一定要先处理好学习率下降，然后先加个正则化试试，并增加epoch，说不准还能再优化
 
